@@ -37,6 +37,7 @@ const PLUGIN_REQUIRED_COMMANDS = new Set([
 ]);
 const CONFIG_GUARD_BYPASS_COMMANDS = new Set(["backup", "doctor", "completion", "secrets"]);
 const JSON_PARSE_ONLY_COMMANDS = new Set(["config set"]);
+const QUIET_STRUCTURED_COMMANDS = new Set(["report"]);
 let configGuardModulePromise: Promise<typeof import("./config-guard.js")> | undefined;
 let pluginRegistryModulePromise: Promise<typeof import("../plugin-registry.js")> | undefined;
 
@@ -115,6 +116,13 @@ function isJsonOutputMode(commandPath: string[], argv: string[]): boolean {
   return true;
 }
 
+function shouldSuppressDoctorStdout(commandPath: string[], argv: string[]): boolean {
+  if (QUIET_STRUCTURED_COMMANDS.has(commandPath[0] ?? "")) {
+    return true;
+  }
+  return isJsonOutputMode(commandPath, argv);
+}
+
 export function registerPreActionHooks(program: Command, programVersion: string) {
   program.hook("preAction", async (_thisCommand, actionCommand) => {
     setProcessTitleForCommand(actionCommand);
@@ -143,7 +151,7 @@ export function registerPreActionHooks(program: Command, programVersion: string)
     if (shouldBypassConfigGuard(commandPath)) {
       return;
     }
-    const suppressDoctorStdout = isJsonOutputMode(commandPath, argv);
+    const suppressDoctorStdout = shouldSuppressDoctorStdout(commandPath, argv);
     const { ensureConfigReady } = await loadConfigGuardModule();
     await ensureConfigReady({
       runtime: defaultRuntime,

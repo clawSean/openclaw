@@ -30,6 +30,7 @@ This page describes the current CLI behavior. If commands change, update this do
 - [`status`](/cli/status)
 - [`health`](/cli/health)
 - [`sessions`](/cli/sessions)
+- [`report`](/cli/report)
 - [`gateway`](/cli/gateway)
 - [`logs`](/cli/logs)
 - [`system`](/cli/system)
@@ -151,6 +152,10 @@ openclaw [--dev] [--profile <name>] <command>
   status
   health
   sessions
+  report
+    bug
+    feature
+    security
   gateway
     call
     health
@@ -711,6 +716,27 @@ Options:
 - `--verbose`
 - `--store <path>`
 - `--active <minutes>`
+
+### `report`
+
+Prepare sanitized bug reports, feature requests, and private security report packets for `openclaw/openclaw`.
+
+Subcommands:
+
+- `bug`
+- `feature`
+- `security`
+
+Shared options:
+
+- `--title <text>`
+- `--summary <text>`
+- `--json`
+- `--markdown`
+- `--output <file>`
+- `--submit`
+- `--yes`
+- `--non-interactive`
 
 ## Reset / Uninstall
 

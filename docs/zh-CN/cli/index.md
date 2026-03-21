@@ -37,6 +37,7 @@ x-i18n:
 - [`status`](/cli/status)
 - [`health`](/cli/health)
 - [`sessions`](/cli/sessions)
+- [`report`](/cli/report)
 - [`gateway`](/cli/gateway)
 - [`logs`](/cli/logs)
 - [`system`](/cli/system)
@@ -156,6 +157,10 @@ openclaw [--dev] [--profile <name>] <command>
   status
   health
   sessions
+  report
+    bug
+    feature
+    security
   gateway
     call
     health

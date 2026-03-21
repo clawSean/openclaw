@@ -80,6 +80,11 @@ describe("registerPreActionHooks", () => {
   function buildProgram() {
     const program = new Command().name("openclaw");
     program.command("status").action(() => {});
+    const report = program.command("report");
+    report
+      .command("bug")
+      .option("--json")
+      .action(() => {});
     program
       .command("backup")
       .command("create")
@@ -251,6 +256,19 @@ describe("registerPreActionHooks", () => {
     expect(ensureConfigReadyMock).toHaveBeenCalledWith({
       runtime: runtimeMock,
       commandPath: ["config", "set"],
+    });
+  });
+
+  it("suppresses doctor stdout for report commands even without --json", async () => {
+    await runPreAction({
+      parseArgv: ["report", "bug"],
+      processArgv: ["node", "openclaw", "report", "bug"],
+    });
+
+    expect(ensureConfigReadyMock).toHaveBeenCalledWith({
+      runtime: runtimeMock,
+      commandPath: ["report", "bug"],
+      suppressDoctorStdout: true,
     });
   });
 

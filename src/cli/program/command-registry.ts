@@ -219,6 +219,19 @@ const coreEntries: CoreCliEntry[] = [
   {
     commands: [
       {
+        name: "report",
+        description: "Prepare sanitized bug, feature, and security reports",
+        hasSubcommands: true,
+      },
+    ],
+    register: async ({ program }) => {
+      const mod = await import("./register.report.js");
+      mod.registerReportCommand(program);
+    },
+  },
+  {
+    commands: [
+      {
         name: "browser",
         description: "Manage OpenClaw's dedicated browser (Chrome/Chromium)",
         hasSubcommands: true,
