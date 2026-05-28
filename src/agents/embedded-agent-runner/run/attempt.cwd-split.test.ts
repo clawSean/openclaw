@@ -45,9 +45,9 @@ describe("runEmbeddedAttempt cwd/workspace split", () => {
     expect(toolsCall?.workspaceDir).toBe(bootstrapCall?.workspaceDir);
     expect(toolsCall?.spawnWorkspaceDir).toBe(bootstrapCall?.workspaceDir);
 
-    const resourceLoaderInit = hoisted.defaultResourceLoaderInitMock.mock.calls[0]?.[0] as
-      | { cwd?: string }
-      | undefined;
+    const resourceLoaderInit = hoisted.defaultResourceLoaderInitMock.mock.calls
+      .map(([init]) => init as { cwd?: string } | undefined)
+      .find((init) => init?.cwd);
     expect(resourceLoaderInit?.cwd).toBe("/tmp/task-repo");
   });
 
