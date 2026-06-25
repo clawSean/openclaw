@@ -5,7 +5,7 @@ import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { toQaError } from "./errors.js";
 import { startQaGatewayChild } from "./gateway-child.js";
 import { startQaLabServer } from "./lab-server.js";
-import { resolveQaLiveTurnTimeoutMs } from "./live-timeout.js";
+import { resolveQaLiveAgentTurnTimeoutMs } from "./live-timeout.js";
 import type { QaProviderMode } from "./model-selection.js";
 import { startQaProviderServer } from "./providers/server-runtime.js";
 import type { QaThinkingLevel } from "./qa-gateway-config.js";
@@ -71,7 +71,7 @@ function resolveManualLaneTimeoutMs(params: {
   ) {
     return params.timeoutMs;
   }
-  return resolveQaLiveTurnTimeoutMs(
+  return resolveQaLiveAgentTurnTimeoutMs(
     {
       providerMode: params.providerMode,
       primaryModel: params.primaryModel,

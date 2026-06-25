@@ -1,4 +1,8 @@
 // Qa Lab plugin module implements live timeout behavior.
+import {
+  parseStrictPositiveInteger,
+  resolveTimerTimeoutMs,
+} from "openclaw/plugin-sdk/number-runtime";
 import type { QaProviderMode } from "./model-selection.js";
 import { getQaProvider } from "./providers/index.js";
 
@@ -7,6 +11,20 @@ type QaLiveTimeoutProfile = {
   primaryModel: string;
   alternateModel: string;
 };
+
+const QA_LIVE_TURN_TIMEOUT_MS_ENV = "OPENCLAW_QA_LIVE_TURN_TIMEOUT_MS";
+
+function resolveLiveTurnFallbackMs(fallbackMs: number) {
+  const callerFallbackMs = resolveTimerTimeoutMs(fallbackMs, 1);
+  const raw = process.env[QA_LIVE_TURN_TIMEOUT_MS_ENV];
+  if (raw === undefined) {
+    return callerFallbackMs;
+  }
+  return Math.max(
+    callerFallbackMs,
+    resolveTimerTimeoutMs(parseStrictPositiveInteger(raw), fallbackMs),
+  );
+}
 
 export function resolveQaLiveTurnTimeoutMs(
   profile: QaLiveTimeoutProfile,
@@ -19,4 +37,15 @@ export function resolveQaLiveTurnTimeoutMs(
     modelRef,
     fallbackMs,
   });
+}
+
+/** Applies the operator override only at a real agent-turn wait boundary. */
+export function resolveQaLiveAgentTurnTimeoutMs(
+  profile: QaLiveTimeoutProfile,
+  fallbackMs: number,
+  modelRef = profile.primaryModel,
+) {
+  const resolvedFallbackMs =
+    profile.providerMode === "live-frontier" ? resolveLiveTurnFallbackMs(fallbackMs) : fallbackMs;
+  return resolveQaLiveTurnTimeoutMs(profile, resolvedFallbackMs, modelRef);
 }

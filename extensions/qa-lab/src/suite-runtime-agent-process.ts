@@ -6,6 +6,7 @@ import { resolveTimerTimeoutMs } from "openclaw/plugin-sdk/number-runtime";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { QaSuiteInfraError } from "./errors.js";
 import { extractGatewayMessageText } from "./gateway-log-sentinel.js";
+import { resolveQaLiveAgentTurnTimeoutMs } from "./live-timeout.js";
 import { runQaCli } from "./qa-cli-process.js";
 import { liveTurnTimeoutMs } from "./suite-runtime-agent-common.js";
 import { readSessionTranscriptSummary } from "./suite-runtime-agent-session.js";
@@ -383,7 +384,10 @@ async function waitForPersistedTranscriptToolEvidence(
 }
 
 async function runAgentPrompt(
-  env: Pick<QaSuiteRuntimeEnv, "gateway" | "transport">,
+  env: Pick<
+    QaSuiteRuntimeEnv,
+    "gateway" | "transport" | "providerMode" | "primaryModel" | "alternateModel"
+  >,
   params: {
     sessionKey: string;
     message: string;
@@ -402,7 +406,13 @@ async function runAgentPrompt(
   },
 ) {
   const started = await startAgentRun(env, params);
-  const waited = await waitForAgentRun(env, started.runId!, params.timeoutMs ?? 30_000);
+  const modelRef = params.model?.includes("/")
+    ? params.model
+    : params.provider && params.model
+      ? `${params.provider}/${params.model}`
+      : env.primaryModel;
+  const turnTimeoutMs = resolveQaLiveAgentTurnTimeoutMs(env, params.timeoutMs ?? 30_000, modelRef);
+  const waited = await waitForAgentRun(env, started.runId!, turnTimeoutMs);
   if (!isSuccessfulAgentWaitResult(waited)) {
     throw new Error(
       `agent.wait returned ${waited.status ?? "unknown"}: ${waited.error ?? "no error"}`,

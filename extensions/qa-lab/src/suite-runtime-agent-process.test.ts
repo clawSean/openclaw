@@ -128,6 +128,9 @@ function startMockQaCli(params: {
 function createAgentPromptEnv(gatewayCall: ReturnType<typeof vi.fn>) {
   return {
     gateway: { call: gatewayCall },
+    providerMode: "mock-openai",
+    primaryModel: "openai/gpt-5.6-luna",
+    alternateModel: "openai/gpt-5.6-luna-mini",
     transport: {
       buildAgentDelivery: vi.fn(() => ({
         channel: "qa-channel",
@@ -135,7 +138,7 @@ function createAgentPromptEnv(gatewayCall: ReturnType<typeof vi.fn>) {
         replyTo: "reply-target",
       })),
     },
-  } as never;
+  } as unknown as Parameters<typeof runAgentPrompt>[0];
 }
 
 describe("qa suite runtime agent process helpers", () => {
@@ -590,6 +593,43 @@ describe("qa suite runtime agent process helpers", () => {
         message: "hello",
       }),
     ).rejects.toThrow("agent.wait returned error: boom");
+  });
+
+  it("applies the live override only to the agent wait boundary", async () => {
+    const previous = process.env.OPENCLAW_QA_LIVE_TURN_TIMEOUT_MS;
+    process.env.OPENCLAW_QA_LIVE_TURN_TIMEOUT_MS = "420000";
+    try {
+      const gatewayCall = vi
+        .fn()
+        .mockResolvedValueOnce({ runId: "run-live-timeout" })
+        .mockResolvedValueOnce({ status: "completed" });
+      const env = {
+        ...createAgentPromptEnv(gatewayCall),
+        providerMode: "live-frontier",
+        primaryModel: "google/gemini-3-flash",
+        alternateModel: "google/gemini-3-flash",
+      } as never;
+
+      await expect(
+        runAgentPrompt(env, {
+          sessionKey: "session-live-timeout",
+          message: "hello",
+        }),
+      ).resolves.toMatchObject({ waited: { status: "completed" } });
+
+      expect(gatewayCall.mock.calls[0]?.[2]).toEqual({ timeoutMs: 30_000 });
+      expect(gatewayCall.mock.calls[1]?.[1]).toEqual({
+        runId: "run-live-timeout",
+        timeoutMs: 420_000,
+      });
+      expect(gatewayCall.mock.calls[1]?.[2]).toEqual({ timeoutMs: 425_000 });
+    } finally {
+      if (previous === undefined) {
+        delete process.env.OPENCLAW_QA_LIVE_TURN_TIMEOUT_MS;
+      } else {
+        process.env.OPENCLAW_QA_LIVE_TURN_TIMEOUT_MS = previous;
+      }
+    }
   });
 
   it("accepts completed agent wait status as a successful terminal run", async () => {
