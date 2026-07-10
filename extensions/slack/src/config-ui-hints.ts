@@ -95,6 +95,14 @@ export const slackChannelConfigUiHints = {
     label: "Slack User Token Read Only",
     help: "When true, treat configured Slack user token usage as read-only helper behavior where possible. Keep enabled if you only need supplemental reads without user-context writes.",
   },
+  appHome: {
+    label: "Slack App Home",
+    help: "Optional Slack App Home view override. When unset, OpenClaw publishes the built-in safe default Home tab.",
+  },
+  "appHome.view": {
+    label: "Slack App Home Inline View",
+    help: 'Display-only inline Slack Block Kit Home view. The view must be type "home" or omit type, may contain up to 100 blocks, and cannot contain action or input controls.',
+  },
   execApprovals: {
     label: "Slack Exec Approvals",
     help: "Slack-native exec approval routing and approver authorization. When unset, OpenClaw auto-enables DM-first native approvals if approvers can be resolved for this Slack account.",

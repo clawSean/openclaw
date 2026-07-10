@@ -10,13 +10,22 @@ function createHomeContext(params?: {
   slashCommandName?: string;
   trackEvent?: () => void;
   shouldDropMismatchedSlackEvent?: (body: unknown) => boolean;
+  slackConfig?: Record<string, unknown>;
 }) {
   const harness = createSlackSystemEventTestHarness();
   const publish = vi.fn().mockResolvedValue({ ok: true });
+  const runtimeError = vi.fn();
   if (params?.shouldDropMismatchedSlackEvent) {
     harness.ctx.shouldDropMismatchedSlackEvent = params.shouldDropMismatchedSlackEvent;
   }
+  harness.ctx.cfg = {
+    channels: {
+      slack: params?.slackConfig ?? {},
+    },
+  } as typeof harness.ctx.cfg;
   harness.ctx.botToken = "xoxb-test";
+  harness.ctx.accountId = "default";
+  harness.ctx.runtime.error = runtimeError;
   (harness.ctx.app as unknown as { client: { views: { publish: typeof publish } } }).client = {
     views: { publish },
   };
@@ -27,6 +36,7 @@ function createHomeContext(params?: {
   });
   return {
     publish,
+    runtimeError,
     getHomeHandler: () => harness.getHandler("app_home_opened") as HomeHandler | null,
   };
 }
@@ -114,6 +124,262 @@ describe("registerSlackHomeEvents", () => {
         text: "Send a DM, mention OpenClaw in a channel, or use `/acme` to start a session.",
       },
     });
+  });
+
+  it("publishes the configured inline Home tab view", async () => {
+    const customView = {
+      type: "home",
+      callback_id: "custom-home-v1",
+      blocks: [{ type: "section", text: { type: "mrkdwn", text: "Welcome" } }],
+    };
+    const { publish, getHomeHandler } = createHomeContext({
+      slackConfig: { appHome: { view: customView } },
+    });
+
+    await getHomeHandler()!({
+      event: {
+        type: "app_home_opened",
+        user: "U123",
+        channel: "D123",
+        tab: "home",
+      },
+      body: {},
+    });
+
+    expect(publish).toHaveBeenCalledWith({
+      token: "xoxb-test",
+      user_id: "U123",
+      view: customView,
+    });
+  });
+
+  it("prefers the account App Home view over the top-level view", async () => {
+    const topView = {
+      type: "home",
+      blocks: [{ type: "section", text: { type: "mrkdwn", text: "Top" } }],
+    };
+    const accountView = {
+      type: "home",
+      blocks: [{ type: "section", text: { type: "mrkdwn", text: "Account" } }],
+    };
+    const { publish, getHomeHandler } = createHomeContext({
+      slackConfig: {
+        appHome: { view: topView },
+        accounts: { default: { appHome: { view: accountView } } },
+      },
+    });
+
+    await getHomeHandler()!({
+      event: {
+        type: "app_home_opened",
+        user: "U123",
+        channel: "D123",
+        tab: "home",
+      },
+      body: {},
+    });
+
+    expect(publish).toHaveBeenCalledWith({
+      token: "xoxb-test",
+      user_id: "U123",
+      view: accountView,
+    });
+  });
+
+  it("passes unknown Home tab blocks through up to Slack's 100 block limit", async () => {
+    const blocks = Array.from({ length: 100 }, (_, index) => ({
+      type: "future_block",
+      block_id: `block-${index}`,
+    }));
+    const customView = {
+      type: "home",
+      callback_id: "future-home-v1",
+      blocks,
+    };
+    const { publish, getHomeHandler } = createHomeContext({
+      slackConfig: { appHome: { view: customView } },
+    });
+
+    await getHomeHandler()!({
+      event: {
+        type: "app_home_opened",
+        user: "U123",
+        channel: "D123",
+        tab: "home",
+      },
+      body: {},
+    });
+
+    expect(publish).toHaveBeenCalledWith({
+      token: "xoxb-test",
+      user_id: "U123",
+      view: customView,
+    });
+  });
+
+  it.each([
+    [
+      "action blocks",
+      {
+        type: "actions",
+        elements: [{ type: "button", action_id: "run", text: { type: "plain_text", text: "Run" } }],
+      },
+    ],
+    [
+      "input blocks",
+      {
+        type: "input",
+        label: { type: "plain_text", text: "Name" },
+        element: { type: "plain_text_input", action_id: "name" },
+      },
+    ],
+    [
+      "section controls",
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: "Run" },
+        accessory: {
+          type: "button",
+          action_id: "run",
+          text: { type: "plain_text", text: "Run" },
+        },
+      },
+    ],
+    [
+      "workflow buttons without action ids",
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: "Run" },
+        accessory: {
+          type: "workflow_button",
+          text: { type: "plain_text", text: "Run" },
+          workflow: { trigger: { url: "https://example.test/trigger" } },
+        },
+      },
+    ],
+  ])(
+    "rejects configured %s before they can enter Slack interaction routing",
+    async (_name, block) => {
+      const customView = { type: "home", blocks: [block] };
+      const { publish, runtimeError, getHomeHandler } = createHomeContext({
+        slackConfig: { appHome: { view: customView } },
+      });
+
+      await getHomeHandler()!({
+        event: {
+          type: "app_home_opened",
+          user: "U123",
+          channel: "D123",
+          tab: "home",
+        },
+        body: {},
+      });
+
+      expect(publish).toHaveBeenCalledTimes(1);
+      expect(publish).toHaveBeenCalledWith({
+        token: "xoxb-test",
+        user_id: "U123",
+        view: expect.objectContaining({
+          type: "home",
+          callback_id: "openclaw:home",
+        }),
+      });
+      expect(publish).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          view: customView,
+        }),
+      );
+      expect(String(runtimeError.mock.calls[0]?.[0])).toContain(
+        "slack app home view config failed",
+      );
+    },
+  );
+
+  it("logs invalid configured views and publishes the default fallback", async () => {
+    const { publish, runtimeError, getHomeHandler } = createHomeContext({
+      slackConfig: { appHome: { view: { type: "modal", blocks: [] } } },
+    });
+
+    await getHomeHandler()!({
+      event: {
+        type: "app_home_opened",
+        user: "U123",
+        channel: "D123",
+        tab: "home",
+      },
+      body: {},
+    });
+
+    expect(publish).toHaveBeenCalledWith({
+      token: "xoxb-test",
+      user_id: "U123",
+      view: expect.objectContaining({
+        type: "home",
+        callback_id: "openclaw:home",
+      }),
+    });
+    expect(runtimeError).toHaveBeenCalledOnce();
+    expect(String(runtimeError.mock.calls[0]?.[0])).toContain("slack app home view config failed");
+  });
+
+  it("falls back to the built-in view when Slack rejects the custom view", async () => {
+    const customView = {
+      type: "home",
+      blocks: [{ type: "section", text: { type: "mrkdwn", text: "Welcome" } }],
+    };
+    const { publish, runtimeError, getHomeHandler } = createHomeContext({
+      slackConfig: { appHome: { view: customView } },
+    });
+    publish.mockRejectedValueOnce(new Error("invalid_blocks"));
+
+    await getHomeHandler()!({
+      event: {
+        type: "app_home_opened",
+        user: "U123",
+        channel: "D123",
+        tab: "home",
+      },
+      body: {},
+    });
+
+    expect(publish).toHaveBeenCalledTimes(2);
+    expect(publish.mock.calls[0]?.[0]?.view).toEqual(customView);
+    expect(publish.mock.calls[1]?.[0]).toEqual({
+      token: "xoxb-test",
+      user_id: "U123",
+      view: expect.objectContaining({
+        type: "home",
+        callback_id: "openclaw:home",
+      }),
+    });
+    expect(runtimeError).toHaveBeenCalledOnce();
+    expect(String(runtimeError.mock.calls[0]?.[0])).toContain(
+      "slack app home custom view publish failed",
+    );
+  });
+
+  it("lets the event fail after both custom and built-in publication fail", async () => {
+    const customView = {
+      type: "home",
+      blocks: [{ type: "section", text: { type: "mrkdwn", text: "Welcome" } }],
+    };
+    const { publish, getHomeHandler } = createHomeContext({
+      slackConfig: { appHome: { view: customView } },
+    });
+    publish.mockRejectedValueOnce(new Error("invalid_blocks"));
+    publish.mockRejectedValueOnce(new Error("transient_failure"));
+
+    await expect(
+      getHomeHandler()!({
+        event: {
+          type: "app_home_opened",
+          user: "U123",
+          channel: "D123",
+          tab: "home",
+        },
+        body: {},
+      }),
+    ).rejects.toThrow("transient_failure");
   });
 
   it("records Agent View only after Slack accepts threadless prompts", async () => {
