@@ -1269,7 +1269,7 @@ Current Slack message actions include `send`, `upload-file`, `download-file`, `r
 Slack group DMs, also called multi-person direct messages or MPDMs, are not channels an app can join by being mentioned. Typing `@YourBot` in an existing group DM does not add the app or make the conversation visible to it.
 
 - If the app was included when the group DM was created, Slack delivers `message.mpim` events and OpenClaw can respond when DM policy allows it.
-- If the app is mentioned in an existing group DM where it is not a member, the bot token cannot see the conversation at all. Slack Web API calls such as `conversations.info`, `conversations.members`, and `conversations.history` return `channel_not_found`, the MPDM does not appear in `conversations.list?types=mpim`, and no event is delivered to OpenClaw.
+- If the app is mentioned in an existing group DM where it is not a member, the bot token cannot see the conversation at all. Slack Web API calls such as `conversations.info`, `conversations.members`, and `conversations.history` fail with method- and context-dependent access or not-found errors, the MPDM does not appear in `conversations.list?types=mpim`, and no event is delivered to OpenClaw.
 - OpenClaw wakes in MPDMs through delivered `message.mpim` events. `app_mention` events do not add the app to DM or MPDM contexts.
 - `dm.groupEnabled` and `dm.groupChannels` only filter MPDMs Slack already delivers to the app. They cannot grant membership or visibility into a group DM the app was never part of. There is no OpenClaw config setting that makes the app see a group DM it never joined.
 
