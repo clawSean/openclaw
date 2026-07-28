@@ -101,13 +101,16 @@ describe("renderIMessagePollBody", () => {
     expect(out).not.toContain('voted for "Beta"');
   });
 
-  it("renders an empty selection snapshot", () => {
-    const out = renderIMessagePollBody({
-      kind: "vote",
-      votes: [],
-    });
+  it("scopes an empty selection snapshot to the event sender", () => {
+    const out = renderIMessagePollBody(
+      {
+        kind: "vote",
+        votes: [],
+      },
+      "+12065550123",
+    );
 
-    expect(out).toContain("no options currently selected");
+    expect(out).toBe("\u{1F4CA} Poll selections: +12065550123 currently selected no options");
   });
 
   it("returns null for a poll with no options and no vote", () => {
