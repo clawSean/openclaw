@@ -1162,7 +1162,7 @@ Current Slack message actions include `send`, `upload-file`, `download-file`, `r
     - `dm.groupChannels` (optional MPIM allowlist)
 
     <Note>
-    `dm.groupEnabled` and `dm.groupChannels` only filter group DMs Slack already delivers to the app. They cannot make the app see a group DM it never joined. Convert the group DM to a private channel and invite the app, or have the app open a new MPDM with `conversations.open`. See [Group DMs (MPDMs) and bots](#group-dms-mpdms-and-bots).
+    `dm.groupEnabled` and `dm.groupChannels` only filter group DMs Slack already delivers to the app. They cannot make the app see a group DM it never joined. Convert the group DM to a private channel and invite the app, or have the app open a new MPDM with `conversations.open`. See [Group DMs (MPDMs) and bots](/channels/slack#group-dms-mpdms-and-bots).
     </Note>
 
     Multi-account precedence:
@@ -1275,7 +1275,7 @@ Slack group DMs, also called multi-person direct messages or MPDMs, are not chan
 
 To bring the app into a group DM, use one of these Slack-supported paths:
 
-1. Convert the group DM to a private channel, then invite the app like any channel member with `/invite @YourBot` or `conversations.invite`.
+1. Convert the group DM to a private channel, then ask a current member to invite the app with `/invite @YourBot`. An API-based invite must call `conversations.invite` with a token whose actor is already a member and allowed to invite the app.
 2. Have the app open a new MPDM with `conversations.open` using a bot token with `mpim:write`, passing the human recipients in `users`. Slack includes the calling bot user automatically.
 
 ## Threading, sessions, and reply tags
