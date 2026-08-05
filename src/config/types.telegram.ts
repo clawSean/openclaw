@@ -100,6 +100,8 @@ export type TelegramCustomCommand = {
 };
 
 export type TelegramAccountConfig = {
+  /** Group/channel message prefixes whose non-empty payloads are dropped before agent dispatch. */
+  agentIgnorePrefixes?: string[];
   /** Optional display name for this account (used in CLI/UI lists). */
   name?: string;
   /** Optional provider capability tags used for agent/runtime guidance. */
@@ -262,6 +264,8 @@ export type TelegramDmConfig = {
 };
 
 export type TelegramTopicConfig = {
+  /** Topic-specific replacement for account/group agent ignore prefixes. */
+  agentIgnorePrefixes?: string[];
   requireMention?: boolean;
   /** Emit internal message hooks for mention-skipped topic messages. */
   ingest?: boolean;
@@ -286,6 +290,8 @@ export type TelegramTopicConfig = {
 };
 
 export type TelegramGroupConfig = {
+  /** Group-specific replacement for account-level agent ignore prefixes. */
+  agentIgnorePrefixes?: string[];
   requireMention?: boolean;
   /** Emit internal message hooks for mention-skipped group messages. */
   ingest?: boolean;

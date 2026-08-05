@@ -22,6 +22,7 @@ import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { createNonExitingRuntime, type RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { getOrCreateAccountThrottler } from "./account-throttler.js";
+import { shouldIgnoreTelegramAgentUpdate } from "./agent-ignore-prefix.js";
 import { resolveTelegramAccount } from "./accounts.js";
 import { normalizeTelegramApiRoot } from "./api-root.js";
 import type { TelegramBotDeps } from "./bot-deps.js";
@@ -191,6 +192,19 @@ export function createTelegramBotCore(
   bot.use(async (ctx, next) => {
     const begin = updateTracker.beginUpdate(ctx);
     if (!begin.accepted) {
+      return;
+    }
+    const botUsername = ctx.me?.username ?? opts.botInfo?.username;
+    if (
+      shouldIgnoreTelegramAgentUpdate({
+        update: ctx.update,
+        accountConfig: telegramCfg,
+        ...(botUsername ? { botUsername } : {}),
+      })
+    ) {
+      // Zero-turn drops may advance Telegram's accepted-update tracker, but must
+      // not cross callback, sequentialization, persistence, or dispatch boundaries.
+      updateTracker.finishUpdate(begin.update, { completed: true });
       return;
     }
     try {

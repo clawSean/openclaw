@@ -158,6 +158,7 @@ const TelegramCustomCommandConfig = {
 } as const;
 export const TelegramTopicSchema = z
   .object({
+    agentIgnorePrefixes: z.array(z.string()).optional(),
     requireMention: z.boolean().optional(),
     ingest: z.boolean().optional(),
     disableAudioPreflight: z.boolean().optional(),
@@ -174,6 +175,7 @@ export const TelegramTopicSchema = z
 
 export const TelegramGroupSchema = z
   .object({
+    agentIgnorePrefixes: z.array(z.string()).optional(),
     requireMention: z.boolean().optional(),
     ingest: z.boolean().optional(),
     disableAudioPreflight: z.boolean().optional(),
@@ -250,6 +252,7 @@ const validateTelegramCustomCommands = (
 
 export const TelegramAccountSchemaBase = z
   .object({
+    agentIgnorePrefixes: z.array(z.string()).optional(),
     name: z.string().optional(),
     capabilities: TelegramCapabilitiesSchema.optional(),
     execApprovals: z

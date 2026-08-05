@@ -492,6 +492,203 @@ export const telegramBotDepsForTest: TelegramBotDeps = {
 
 vi.doMock("./bot.runtime.js", () => telegramBotRuntimeForTest);
 
+type RawIngressUpdate = {
+  update_id: number;
+  message?: Record<string, unknown>;
+  edited_message?: Record<string, unknown>;
+  channel_post?: Record<string, unknown>;
+  edited_channel_post?: Record<string, unknown>;
+};
+
+type RawIngressMiddleware = (
+  ctx: Record<string, unknown>,
+  next: () => Promise<void>,
+) => Promise<void>;
+
+class RawIngressTestBot {
+  private readonly middlewares: RawIngressMiddleware[] = [];
+  private readonly middlewareCalls: number[] = [];
+  private readonly handlers = new Map<
+    string,
+    Array<(ctx: Record<string, unknown>) => Promise<void>>
+  >();
+  private downstreamHandlerCalls = 0;
+
+  api = {
+    config: { use: grammySpies.useSpy },
+    answerCallbackQuery: grammySpies.answerCallbackQuerySpy,
+    sendChatAction: grammySpies.sendChatActionSpy,
+    editMessageText: grammySpies.editMessageTextSpy,
+    editMessageReplyMarkup: grammySpies.editMessageReplyMarkupSpy,
+    deleteMessage: grammySpies.deleteMessageSpy,
+    setMessageReaction: grammySpies.setMessageReactionSpy,
+    setMyCommands: grammySpies.setMyCommandsSpy,
+    getMe: grammySpies.getMeSpy,
+    getChat: grammySpies.getChatSpy,
+    sendMessage: grammySpies.sendMessageSpy,
+    sendAnimation: grammySpies.sendAnimationSpy,
+    sendPhoto: grammySpies.sendPhotoSpy,
+    getFile: grammySpies.getFileSpy,
+    raw: {
+      sendRichMessage: async (params: RichMessageParams) =>
+        grammySpies.sendMessageSpy(
+          params.chat_id,
+          getRichMessageText(params),
+          toLegacyMessageParams(params),
+        ),
+      editMessageText: async (params: RichMessageParams) =>
+        grammySpies.editMessageTextSpy(
+          params.chat_id,
+          params.message_id,
+          getRichMessageText(params),
+          toLegacyMessageParams(params),
+        ),
+    },
+  };
+
+  constructor(
+    public token: string,
+    public options?: { client?: { fetch?: typeof fetch }; botInfo?: unknown },
+  ) {}
+
+  use = (middleware: RawIngressMiddleware) => {
+    this.middlewares.push(middleware);
+    this.middlewareCalls.push(0);
+    return this;
+  };
+
+  on = (event: string, handler: (ctx: Record<string, unknown>) => Promise<void>) => {
+    const handlers = this.handlers.get(event) ?? [];
+    handlers.push(handler);
+    this.handlers.set(event, handlers);
+    return this;
+  };
+
+  command = () => this;
+  catch = () => this;
+  stop = async () => undefined;
+
+  callsAtMiddleware(index: number): number {
+    return this.middlewareCalls[index] ?? 0;
+  }
+
+  callsAtDownstreamHandler(): number {
+    return this.downstreamHandlerCalls;
+  }
+
+  async handleUpdate(update: RawIngressUpdate): Promise<void> {
+    const payload =
+      update.message ?? update.edited_message ?? update.channel_post ?? update.edited_channel_post;
+    const ctx: Record<string, unknown> = {
+      update,
+      message: update.message,
+      editedMessage: update.edited_message,
+      channelPost: update.channel_post,
+      editedChannelPost: update.edited_channel_post,
+      chat: payload?.chat,
+      from: payload?.from,
+      me: {
+        id: 777_000,
+        is_bot: true,
+        first_name: "Current",
+        username:
+          (this.options?.botInfo as { username?: string } | undefined)?.username ?? "CurrentBot",
+      },
+      api: this.api,
+      getFile: async () => ({ download: async () => new Uint8Array() }),
+      reply: async () => undefined,
+    };
+    const dispatch = async (index: number): Promise<void> => {
+      const middleware = this.middlewares[index];
+      if (middleware) {
+        this.middlewareCalls[index] = (this.middlewareCalls[index] ?? 0) + 1;
+        await middleware(ctx, async () => await dispatch(index + 1));
+        return;
+      }
+      const event = update.message
+        ? "message"
+        : update.edited_message
+          ? "edited_message"
+          : update.channel_post
+            ? "channel_post"
+            : "edited_channel_post";
+      for (const handler of this.handlers.get(event) ?? []) {
+        this.downstreamHandlerCalls += 1;
+        await handler(ctx);
+      }
+    };
+    await dispatch(0);
+  }
+}
+
+export async function createRawTelegramUpdateIngressHarnessForTest(params: {
+  stateDir: string;
+  config: OpenClawConfig;
+  accountId: string;
+  botUsername: string;
+}) {
+  // Reserved for future persistence-backed assertions; this narrowed harness
+  // currently observes only real middleware boundaries.
+  void params.stateDir;
+  const rawIngressBotCore = await import("./bot-core.js");
+  const { runWithTelegramSpooledReplayUpdate } = await import("./bot-processing-outcome.js");
+  const watermarkWrite = vi.fn();
+  let resolvePersistence!: () => void;
+  const persistenceIdle = new Promise<void>((resolve) => {
+    resolvePersistence = resolve;
+  });
+  rawIngressBotCore.setTelegramBotRuntimeForTest({
+    Bot: RawIngressTestBot as unknown as TelegramBotRuntimeForTest["Bot"],
+    sequentialize: ((_keyFn: (ctx: unknown) => string) => {
+      return async (_ctx: unknown, next: () => Promise<void>) => await next();
+    }) as unknown as TelegramBotRuntimeForTest["sequentialize"],
+    apiThrottler: (() => () => undefined) as unknown as TelegramBotRuntimeForTest["apiThrottler"],
+  });
+  const bot = rawIngressBotCore.createTelegramBotCore({
+    token: "test-token",
+    accountId: params.accountId,
+    config: params.config,
+    botInfo: {
+      id: 777_000,
+      is_bot: true,
+      first_name: "Current",
+      username: params.botUsername,
+      can_join_groups: true,
+      can_read_all_group_messages: true,
+      supports_inline_queries: false,
+    },
+    updateOffset: {
+      onUpdateId: (updateId) => {
+        watermarkWrite(updateId);
+        resolvePersistence();
+      },
+    },
+    telegramDeps: telegramBotDepsForTest,
+  }) as unknown as RawIngressTestBot;
+  const watermarkBaseline = watermarkWrite.mock.calls.length;
+
+  return {
+    handleLiveUpdate: async (update: RawIngressUpdate) => await bot.handleUpdate(update),
+    handleSpooledReplayUpdate: async (update: RawIngressUpdate) => {
+      await runWithTelegramSpooledReplayUpdate(update, async () => await bot.handleUpdate(update));
+    },
+    awaitPersistenceIdle: async () => await persistenceIdle,
+    dispose: async () => {
+      await bot.stop();
+      rawIngressBotCore.setTelegramBotRuntimeForTest(undefined);
+    },
+    observers: {
+      updateWatermarkWrite: {
+        calls: () => watermarkWrite.mock.calls.length - watermarkBaseline,
+      },
+      // Registration order in bot-core is tracker, callback, then sequentialize.
+      callbackMiddleware: { calls: () => bot.callsAtMiddleware(1) },
+      sequentialize: { calls: () => bot.callsAtMiddleware(2) },
+      downstreamHandler: { calls: () => bot.callsAtDownstreamHandler() },
+    },
+  };
+}
+
 export const getOnHandler = (event: string) => {
   const handler = onSpy.mock.calls.find((call) => call[0] === event)?.[1];
   if (!handler) {
