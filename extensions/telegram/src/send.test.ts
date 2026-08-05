@@ -22,6 +22,12 @@ import {
   hasProviderObservedTelegramThreadBinding,
 } from "./message-cache.js";
 import { registerTelegramOutboundGroupHistoryRecorder } from "./outbound-message-context.js";
+import {
+  beginTelegramPollRegistration,
+  getPreparedTelegramPollAnswer,
+  prepareTelegramPollAnswerContext,
+  settleTelegramPollAnswerContext,
+} from "./poll-answer-context.js";
 import { recordTelegramPollRegistryEntry } from "./poll-registry.js";
 import { createTelegramPromptContextProjectionCursor } from "./prompt-context-projection.js";
 import { inputRichBlocksToPlainText, type InputRichBlock } from "./rich-block-model.js";
@@ -153,7 +159,7 @@ const sendMessageTelegram: typeof sendMessageTelegramImpl = async (to, text, opt
 
 const TELEGRAM_TEST_CFG = {};
 const TELEGRAM_POLL_REGISTRY_NAMESPACE = "telegram.poll-registry";
-const TELEGRAM_POLL_REGISTRY_MAX_ENTRIES = 100;
+const TELEGRAM_POLL_REGISTRY_MAX_ENTRIES = 10_000;
 type TelegramPollRegistryEntry = Omit<
   Parameters<typeof recordTelegramPollRegistryEntry>[0],
   "accountId" | "env"
@@ -201,7 +207,13 @@ function installTelegramStateRuntimeForTest(
           "telegram",
           options,
         )) as TelegramRuntime["state"]["openKeyedStore"],
-      openSyncKeyedStore: (() => syncStore) as TelegramRuntime["state"]["openSyncKeyedStore"],
+      openSyncKeyedStore: ((options) =>
+        options.namespace === TELEGRAM_SENT_MESSAGE_CACHE_NAMESPACE
+          ? syncStore
+          : createPluginStateSyncKeyedStoreForTests(
+              "telegram",
+              options,
+            )) as TelegramRuntime["state"]["openSyncKeyedStore"],
     },
     channel: {},
   } as TelegramRuntime);
@@ -5102,6 +5114,7 @@ describe("sendPollTelegram", () => {
     const store = createPluginStateKeyedStoreForTests<TelegramPollRegistryEntry>("telegram", {
       namespace: TELEGRAM_POLL_REGISTRY_NAMESPACE,
       maxEntries: TELEGRAM_POLL_REGISTRY_MAX_ENTRIES,
+      overflowPolicy: "reject-new",
     });
     await store.clear();
     return store;
@@ -5184,7 +5197,12 @@ describe("sendPollTelegram", () => {
       { cfg: TELEGRAM_TEST_CFG, token: "t", api: api as unknown as Bot["api"] },
     );
 
-    expect(res).toEqual({ messageId: "123", chatId: "555", pollId: "p1" });
+    expect(res).toMatchObject({
+      messageId: "123",
+      chatId: "555",
+      pollId: "p1",
+      pollAnswerRouting: "unavailable",
+    });
     expect(api.sendPoll).toHaveBeenCalledTimes(1);
     const sendPollMock = api.sendPoll as ReturnType<typeof vi.fn>;
     const sendPollCall = firstMockCall(sendPollMock, "send poll call");
@@ -5197,30 +5215,42 @@ describe("sendPollTelegram", () => {
 
   it("records a public poll origin with its resolved topic", async () => {
     const store = await installPollRegistryStore();
-    const api = {
-      sendPoll: vi.fn(async () => ({
-        message_id: 123,
-        chat: { id: -1001234567890 },
-        poll: { id: "poll-public" },
-      })),
-    };
+    botApi.getChatMember.mockResolvedValue({ status: "administrator" });
+    botApi.sendPoll.mockResolvedValue({
+      message_id: 123,
+      message_thread_id: 99,
+      chat: {
+        id: -1001234567890,
+        type: "supergroup",
+        title: "Reviewers",
+        is_forum: true,
+      },
+      poll: { id: "poll-public" },
+    });
 
-    await sendPollTelegram(
+    const result = await sendPollTelegram(
       "-1001234567890:topic:99",
       { question: " Ready? ", options: [" Yes ", "No "] },
       {
         cfg: TELEGRAM_TEST_CFG,
-        token: "t",
-        api: api as unknown as Bot["api"],
+        token: "999:token",
         isAnonymous: false,
       },
     );
 
+    expect(result.pollAnswerRouting).toBe("enabled");
+    expect(botApi.getChatMember).toHaveBeenCalledWith(-1001234567890, 999);
     expect(await store.entries()).toEqual([
       expect.objectContaining({
         value: expect.objectContaining({
           pollId: "poll-public",
-          chatId: "-1001234567890",
+          chat: {
+            id: -1001234567890,
+            type: "supergroup",
+            title: "Reviewers",
+            is_forum: true,
+          },
+          messageId: 123,
           messageThreadId: 99,
           question: "Ready?",
           options: ["Yes", "No"],
@@ -5229,26 +5259,251 @@ describe("sendPollTelegram", () => {
     ]);
   });
 
-  it("does not register anonymous polls", async () => {
+  it("reports unavailable routing when the bot cannot verify group voters", async () => {
+    const store = await installPollRegistryStore();
+    botApi.getChatMember.mockResolvedValue({ status: "member" });
+    botApi.sendPoll.mockResolvedValue({
+      message_id: 124,
+      chat: { id: -1001234567890, type: "supergroup", title: "Reviewers" },
+      poll: { id: "poll-non-admin" },
+    });
+
+    await expect(
+      sendPollTelegram(
+        "-1001234567890",
+        { question: "Ready?", options: ["Yes", "No"] },
+        {
+          cfg: TELEGRAM_TEST_CFG,
+          token: "999:token",
+          isAnonymous: false,
+        },
+      ),
+    ).resolves.toMatchObject({
+      pollAnswerRouting: "unavailable",
+      warning: expect.stringContaining("not an administrator"),
+    });
+    expect(await store.entries()).toHaveLength(0);
+  });
+
+  const disabledPollRouteCases: Array<{
+    name: string;
+    cfg: Parameters<typeof sendPollTelegram>[2]["cfg"];
+    messageThreadId?: number;
+    omitResultThreadId?: boolean;
+  }> = [
+    {
+      name: "account policy",
+      cfg: { channels: { telegram: { groupPolicy: "disabled" as const } } },
+      messageThreadId: undefined,
+    },
+    {
+      name: "group scope",
+      cfg: {
+        channels: {
+          telegram: {
+            groups: { "-1001234567890": { enabled: false } },
+          },
+        },
+      },
+      messageThreadId: undefined,
+    },
+    {
+      name: "topic policy",
+      cfg: {
+        channels: {
+          telegram: {
+            groupPolicy: "open" as const,
+            groups: {
+              "-1001234567890": {
+                topics: { "99": { groupPolicy: "disabled" as const } },
+              },
+            },
+          },
+        },
+      },
+      messageThreadId: 99,
+    },
+    {
+      name: "General topic policy without a returned thread id",
+      cfg: {
+        channels: {
+          telegram: {
+            groupPolicy: "open" as const,
+            groups: {
+              "-1001234567890": {
+                topics: { "1": { groupPolicy: "disabled" as const } },
+              },
+            },
+          },
+        },
+      },
+      messageThreadId: 1,
+      omitResultThreadId: true,
+    },
+    {
+      name: "topic scope",
+      cfg: {
+        channels: {
+          telegram: {
+            groups: {
+              "-1001234567890": { topics: { "99": { enabled: false } } },
+            },
+          },
+        },
+      },
+      messageThreadId: 99,
+    },
+  ];
+
+  it.each(disabledPollRouteCases)(
+    "reports unavailable routing for disabled $name",
+    async ({ cfg, messageThreadId, omitResultThreadId }) => {
+      const store = await installPollRegistryStore();
+      botApi.sendPoll.mockResolvedValue({
+        message_id: 125,
+        ...(messageThreadId === undefined || omitResultThreadId
+          ? {}
+          : { message_thread_id: messageThreadId }),
+        chat: { id: -1001234567890, type: "supergroup", title: "Reviewers" },
+        poll: { id: "poll-disabled" },
+      });
+
+      await expect(
+        sendPollTelegram(
+          "-1001234567890",
+          { question: "Ready?", options: ["Yes", "No"] },
+          {
+            cfg,
+            token: "999:token",
+            isAnonymous: false,
+            ...(messageThreadId === undefined ? {} : { messageThreadId }),
+          },
+        ),
+      ).resolves.toMatchObject({
+        pollAnswerRouting: "unavailable",
+        warning: expect.stringContaining("inbound messages are disabled"),
+      });
+      expect(botApi.getChatMember).not.toHaveBeenCalled();
+      expect(await store.entries()).toHaveLength(0);
+    },
+  );
+
+  it("reports unavailable routing for channel polls", async () => {
+    const store = await installPollRegistryStore();
+    botApi.sendPoll.mockResolvedValue({
+      message_id: 125,
+      chat: { id: -1001234567890, type: "channel", title: "Announcements" },
+      poll: { id: "poll-channel" },
+    });
+
+    await expect(
+      sendPollTelegram(
+        "-1001234567890",
+        { question: "Ready?", options: ["Yes", "No"] },
+        {
+          cfg: TELEGRAM_TEST_CFG,
+          token: "999:token",
+          isAnonymous: false,
+        },
+      ),
+    ).resolves.toMatchObject({
+      pollAnswerRouting: "unavailable",
+      warning: expect.stringContaining("not supported for Telegram channels"),
+    });
+    expect(botApi.getChatMember).not.toHaveBeenCalled();
+    expect(await store.entries()).toHaveLength(0);
+  });
+
+  it("prepares a fast poll route without waiting for registration", async () => {
+    const entry = {
+      pollId: "poll-fast-answer",
+      chat: { id: -1001234567890, type: "supergroup" as const, title: "Reviewers" },
+      messageId: 125,
+      question: "Ready?",
+      options: ["Yes", "No"],
+    };
+    const registration = beginTelegramPollRegistration({ entry });
+    const update = {
+      poll_answer: {
+        poll_id: "poll-fast-answer",
+        option_ids: [0],
+        user: { id: 9, first_name: "Ada", is_bot: false },
+      },
+    };
+    prepareTelegramPollAnswerContext({ update });
+    expect(getPreparedTelegramPollAnswer(update)).toMatchObject({
+      entry: { pollId: "poll-fast-answer", chat: { id: -1001234567890 } },
+      registrationPending: true,
+    });
+
+    let settlementFinished = false;
+    const settlement = settleTelegramPollAnswerContext({ update }).then(() => {
+      settlementFinished = true;
+    });
+    await Promise.resolve();
+    expect(settlementFinished).toBe(false);
+    registration.complete(entry);
+    await settlement;
+    expect(getPreparedTelegramPollAnswer(update)).toEqual({ entry });
+  });
+
+  it("does not reread or delay unknown poll answers", async () => {
+    const store = await installPollRegistryStore();
+    const syncStore = createPluginStateSyncKeyedStoreForTests<TelegramPollRegistryEntry>(
+      "telegram",
+      {
+        namespace: TELEGRAM_POLL_REGISTRY_NAMESPACE,
+        maxEntries: TELEGRAM_POLL_REGISTRY_MAX_ENTRIES,
+        overflowPolicy: "reject-new",
+      },
+    );
+    const lookup = vi.spyOn(syncStore, "lookup");
+    setTelegramRuntime({
+      state: {
+        openKeyedStore: (() => store) as TelegramRuntime["state"]["openKeyedStore"],
+        openSyncKeyedStore: (() => syncStore) as TelegramRuntime["state"]["openSyncKeyedStore"],
+      },
+      channel: {},
+    } as TelegramRuntime);
+    const update = {
+      update_id: 13,
+      poll_answer: {
+        poll_id: "poll-unknown",
+        user: { id: 10, is_bot: false, first_name: "Ada" },
+        option_ids: [0],
+      },
+    };
+
+    prepareTelegramPollAnswerContext({ update });
+
+    expect(getPreparedTelegramPollAnswer(update)?.entry).toBeNull();
+    expect(lookup).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports default anonymous polls as unavailable without registering them", async () => {
     const store = await installPollRegistryStore();
     const api = {
       sendPoll: vi.fn(async () => ({
         message_id: 123,
-        chat: { id: 555 },
+        chat: { id: 555, type: "private" },
         poll: { id: "poll-anonymous" },
       })),
     };
 
-    await sendPollTelegram(
-      "555",
-      { question: "Ready?", options: ["Yes", "No"] },
-      {
-        cfg: TELEGRAM_TEST_CFG,
-        token: "t",
-        api: api as unknown as Bot["api"],
-        isAnonymous: true,
-      },
-    );
+    await expect(
+      sendPollTelegram(
+        "555",
+        { question: "Ready?", options: ["Yes", "No"] },
+        {
+          cfg: TELEGRAM_TEST_CFG,
+          token: "t",
+          api: api as unknown as Bot["api"],
+        },
+      ),
+    ).resolves.toMatchObject({
+      pollAnswerRouting: "unavailable",
+      warning: expect.stringContaining("Send a public poll"),
+    });
 
     expect(await store.entries()).toHaveLength(0);
   });
@@ -5273,7 +5528,7 @@ describe("sendPollTelegram", () => {
     const api = {
       sendPoll: vi.fn(async () => ({
         message_id: 123,
-        chat: { id: 555 },
+        chat: { id: 555, type: "private" },
         poll: { id: "poll-write-error" },
       })),
     };
@@ -5293,6 +5548,9 @@ describe("sendPollTelegram", () => {
       messageId: "123",
       chatId: "555",
       pollId: "poll-write-error",
+      pollAnswerRouting: "unavailable",
+      warning:
+        "Poll sent, but answers cannot reach the agent because routing state could not be saved. Ask the user to reply in text.",
     });
     expect(api.sendPoll).toHaveBeenCalledTimes(1);
     expect(register.mock.calls.filter(([key]) => key === pollRegistryKey)).toHaveLength(1);
