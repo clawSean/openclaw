@@ -1,3 +1,4 @@
+import type { ProviderUsageSummary } from "./provider-usage.profile.types.js";
 // Formats provider usage summaries for CLI and status output.
 import { clampPercent } from "./provider-usage.shared.js";
 import type {
@@ -128,41 +129,16 @@ export function formatUsageSummaryLine(
   return `📊 Usage: ${parts.join(" · ")}`;
 }
 
-export function formatUsageReportLines(summary: UsageSummary, opts?: { now?: number }): string[] {
+export function formatUsageReportLines(
+  summary: ProviderUsageSummary,
+  opts?: { now?: number },
+): string[] {
   if (summary.providers.length === 0 && !summary.profiles?.length) {
     return ["Usage: no provider usage available."];
   }
 
   const lines: string[] = ["Usage:"];
-  const profileProviders = new Set(summary.profiles?.map((entry) => entry.provider) ?? []);
-  for (const entry of summary.providers) {
-    if (profileProviders.has(entry.provider)) {
-      continue;
-    }
-    const planSuffix = entry.plan ? ` (${entry.plan})` : "";
-    if (entry.error) {
-      lines.push(`  ${entry.displayName}${planSuffix}: ${entry.error}`);
-      continue;
-    }
-    if (entry.windows.length === 0 && !entry.billing?.length) {
-      lines.push(`  ${entry.displayName}${planSuffix}: ${entry.summary?.trim() || "no data"}`);
-      continue;
-    }
-    lines.push(`  ${entry.displayName}${planSuffix}`);
-    if (entry.summary?.trim()) {
-      lines.push(`    ${entry.summary.trim()}`);
-    }
-    for (const window of entry.windows) {
-      const remaining = clampPercent(100 - window.usedPercent);
-      const reset = formatResetRemaining(window.resetAt, opts?.now);
-      const resetSuffix = reset ? ` · resets ${reset}` : "";
-      lines.push(`    ${window.label}: ${remaining.toFixed(0)}% left${resetSuffix}`);
-    }
-    for (const billing of entry.billing ?? []) {
-      lines.push(`    ${formatBillingEntry(billing)}`);
-    }
-  }
-  const profilesByProvider = new Map<string, NonNullable<UsageSummary["profiles"]>>();
+  const profilesByProvider = new Map<string, NonNullable<ProviderUsageSummary["profiles"]>>();
   for (const entry of summary.profiles ?? []) {
     const profiles = profilesByProvider.get(entry.provider);
     if (profiles) {
@@ -171,12 +147,7 @@ export function formatUsageReportLines(summary: UsageSummary, opts?: { now?: num
       profilesByProvider.set(entry.provider, [entry]);
     }
   }
-  for (const profiles of profilesByProvider.values()) {
-    const first = profiles[0];
-    if (!first) {
-      continue;
-    }
-    lines.push(`  ${first.displayName}`);
+  const appendProfiles = (profiles: NonNullable<ProviderUsageSummary["profiles"]>) => {
     for (const entry of profiles) {
       const planSuffix = entry.plan ? ` (${entry.plan})` : "";
       if (entry.error) {
@@ -197,6 +168,41 @@ export function formatUsageReportLines(summary: UsageSummary, opts?: { now?: num
         lines.push(`      ${formatBillingEntry(billing)}`);
       }
     }
+  };
+  for (const entry of summary.providers) {
+    const planSuffix = entry.plan ? ` (${entry.plan})` : "";
+    if (entry.error) {
+      lines.push(`  ${entry.displayName}${planSuffix}: ${entry.error}`);
+    } else if (entry.windows.length === 0 && !entry.billing?.length) {
+      lines.push(`  ${entry.displayName}${planSuffix}: ${entry.summary?.trim() || "no data"}`);
+    } else {
+      lines.push(`  ${entry.displayName}${planSuffix}`);
+      if (entry.summary?.trim()) {
+        lines.push(`    ${entry.summary.trim()}`);
+      }
+      for (const window of entry.windows) {
+        const remaining = clampPercent(100 - window.usedPercent);
+        const reset = formatResetRemaining(window.resetAt, opts?.now);
+        const resetSuffix = reset ? ` · resets ${reset}` : "";
+        lines.push(`    ${window.label}: ${remaining.toFixed(0)}% left${resetSuffix}`);
+      }
+      for (const billing of entry.billing ?? []) {
+        lines.push(`    ${formatBillingEntry(billing)}`);
+      }
+    }
+    const profiles = profilesByProvider.get(entry.provider);
+    if (profiles) {
+      appendProfiles(profiles);
+      profilesByProvider.delete(entry.provider);
+    }
+  }
+  for (const profiles of profilesByProvider.values()) {
+    const first = profiles[0];
+    if (!first) {
+      continue;
+    }
+    lines.push(`  ${first.displayName}`);
+    appendProfiles(profiles);
   }
   return lines;
 }

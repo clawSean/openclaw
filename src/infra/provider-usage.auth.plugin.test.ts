@@ -83,7 +83,7 @@ vi.mock("../secrets/provider-env-vars.js", () => ({
 }));
 
 let resolveProviderAuths: typeof import("./provider-usage.auth.js").resolveProviderAuths;
-let resolveProviderAuthProfile: typeof import("./provider-usage.auth.js").resolveProviderAuthProfile;
+let resolveProviderAuthProfile: typeof import("./provider-usage.profile-auth.js").resolveProviderUsageProfileAuth;
 
 function resolveProviderAuthsForTest(
   params: Parameters<typeof resolveProviderAuths>[0],
@@ -113,8 +113,9 @@ function providerCalls(mockFn: { mock: { calls: unknown[][] } }): unknown[] {
 
 describe("resolveProviderAuths plugin boundary", () => {
   beforeAll(async () => {
-    ({ resolveProviderAuthProfile, resolveProviderAuths } =
-      await import("./provider-usage.auth.js"));
+    ({ resolveProviderAuths } = await import("./provider-usage.auth.js"));
+    ({ resolveProviderUsageProfileAuth: resolveProviderAuthProfile } =
+      await import("./provider-usage.profile-auth.js"));
   });
 
   beforeEach(() => {
@@ -452,7 +453,7 @@ describe("resolveProviderAuths plugin boundary", () => {
       expect.objectContaining({
         store,
         profileId: "zai:work",
-        allowRefresh: false,
+        allowProfileFallback: false,
       }),
     );
     expect(resolveAuthProfileOrderMock).not.toHaveBeenCalled();
@@ -473,7 +474,7 @@ describe("resolveProviderAuths plugin boundary", () => {
             provider: storedProvider,
             access: "profile-access",
             refresh: "profile-refresh",
-            expires: Date.now() + 60_000,
+            expires: Date.now() + 10 * 60_000,
           },
         },
       });
@@ -495,7 +496,7 @@ describe("resolveProviderAuths plugin boundary", () => {
         credentialType: "oauth",
       });
       expect(resolveApiKeyForProfileMock).toHaveBeenCalledWith(
-        expect.objectContaining({ profileId, allowRefresh: false }),
+        expect.objectContaining({ profileId, allowProfileFallback: false }),
       );
     },
   );
@@ -544,6 +545,29 @@ describe("resolveProviderAuths plugin boundary", () => {
     ).resolves.toBeNull();
     expect(resolveApiKeyForProfileMock).not.toHaveBeenCalled();
     expect(resolveAuthProfileOrderMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects expiring OAuth before the existing resolver can refresh or fall back", async () => {
+    ensureAuthProfileStoreWithoutExternalProfilesMock.mockReturnValue({
+      profiles: {
+        "openai:expiring": {
+          type: "oauth",
+          provider: "openai",
+          access: "expiring-access",
+          refresh: "refresh-token",
+          expires: Date.now() + 60_000,
+        },
+      },
+    });
+
+    await expect(
+      resolveProviderAuthProfile({
+        provider: "openai",
+        authProfileId: "openai:expiring",
+        config: {},
+      }),
+    ).resolves.toBeNull();
+    expect(resolveApiKeyForProfileMock).not.toHaveBeenCalled();
   });
 
   it("does not fall back to standard Anthropic API keys for usage auth", async () => {

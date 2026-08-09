@@ -17,7 +17,8 @@ import { resolveEnvApiKey } from "../../agents/model-auth-env.js";
 import { resolveUsableCustomProviderApiKey } from "../../agents/model-auth.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { loadProviderUsageSummary } from "../../infra/provider-usage.load.js";
-import type { UsageProviderId, UsageSummary } from "../../infra/provider-usage.types.js";
+import type { ProviderUsageSummary } from "../../infra/provider-usage.profile.types.js";
+import type { UsageProviderId } from "../../infra/provider-usage.types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { listProviderUsagePluginDescriptors } from "../../plugins/provider-runtime.js";
 import { formatForLog } from "../ws-log.js";
@@ -32,7 +33,7 @@ type ProviderUsageCacheEntry = {
   credentialKey: string;
   providerKey: string;
   refreshedAt: number;
-  summary: UsageSummary;
+  summary: ProviderUsageSummary;
   usageByProvider: Map<string, ProviderUsageStatus>;
   usageByProfile: Map<string, ProfileUsageStatus>;
 };
@@ -42,7 +43,7 @@ type ProviderUsageRefresh = {
   configRef: object;
   credentialKey: string;
   providerKey: string;
-  promise: Promise<UsageSummary>;
+  promise: Promise<ProviderUsageSummary>;
 };
 
 const usageCacheByAgentId = new Map<string, ProviderUsageCacheEntry>();
@@ -165,7 +166,7 @@ function scheduleProviderUsageRefresh(params: {
   credentialKey: string;
   providerIds: UsageProviderId[];
   providerKey: string;
-}): Promise<UsageSummary> {
+}): Promise<ProviderUsageSummary> {
   const active = usageRefreshByAgentId.get(params.agentId);
   if (
     active?.agentDir === params.agentDir &&
@@ -283,7 +284,7 @@ export function readProviderUsageStaleWhileRevalidate(params: ProviderUsageCache
 /** Returns cached provider usage, awaiting only a cold miss and refreshing stale data in place. */
 async function loadProviderUsageSummaryStaleWhileRevalidate(
   params: ProviderUsageCacheParams,
-): Promise<UsageSummary> {
+): Promise<ProviderUsageSummary> {
   if (params.providerIds.length === 0) {
     usageCacheByAgentId.delete(params.agentId);
     return { updatedAt: params.now, providers: [] };
@@ -312,7 +313,7 @@ async function loadProviderUsageSummaryStaleWhileRevalidate(
 export async function loadUsageStatusStaleWhileRevalidate(params: {
   config: OpenClawConfig;
   now?: number;
-}): Promise<UsageSummary> {
+}): Promise<ProviderUsageSummary> {
   const agentId = resolveLegacyInheritedAuthAgentId(params.config);
   const agentDir = resolveLegacyInheritedAuthDir(params.config);
   const store = ensureAuthProfileStore(agentDir, {

@@ -209,8 +209,6 @@ export type ProviderFetchUsageSnapshotContext = {
   token: string;
   accountId?: string;
   authProfileId?: string;
-  /** Exact-profile reads must not use ambient credential metadata from another account. */
-  exactProfileRead?: boolean;
   /** Non-secret plan metadata from the resolved credential (e.g. Claude "max"). */
   subscriptionType?: string;
   rateLimitTier?: string;

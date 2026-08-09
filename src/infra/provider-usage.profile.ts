@@ -7,7 +7,11 @@ import {
 } from "../plugins/provider-runtime.js";
 import { resolveFetch } from "./fetch.js";
 import { resolveProxyFetchFromEnv } from "./net/proxy-fetch.js";
-import { resolveProviderAuthProfile } from "./provider-usage.auth.js";
+import { resolveProviderUsageProfileAuth } from "./provider-usage.profile-auth.js";
+import type {
+  ProviderUsageProfileReadParams,
+  ProviderUsageProfileSnapshot,
+} from "./provider-usage.profile.types.js";
 import {
   DEFAULT_TIMEOUT_MS,
   resolveProviderUsageDisplayName,
@@ -17,8 +21,6 @@ import {
 import type {
   ProviderUsageBilling,
   ProviderUsageCostHistory,
-  ProviderUsageProfileReadParams,
-  ProviderUsageProfileSnapshot,
   ProviderUsageSnapshot,
   UsageWindow,
 } from "./provider-usage.types.js";
@@ -189,7 +191,7 @@ export async function readProviderUsageProfile(
     throw new Error("fetch is not available");
   }
 
-  const auth = await resolveProviderAuthProfile({
+  const auth = await resolveProviderUsageProfileAuth({
     provider,
     authProfileId,
     agentDir: options.agentDir,
@@ -278,7 +280,6 @@ export async function readProviderUsageProfile(
           token: fetchAuth.token,
           accountId: fetchAuth.accountId,
           authProfileId,
-          exactProfileRead: true,
           subscriptionType: fetchAuth.subscriptionType,
           rateLimitTier: fetchAuth.rateLimitTier,
           email: fetchAuth.email,

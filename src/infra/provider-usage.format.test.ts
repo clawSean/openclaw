@@ -7,6 +7,7 @@ import {
   formatUsageSummaryLine,
   formatUsageWindowSummary,
 } from "./provider-usage.format.js";
+import type { ProviderUsageSummary } from "./provider-usage.profile.types.js";
 import type { ProviderUsageSnapshot, UsageSummary } from "./provider-usage.types.js";
 
 const now = Date.UTC(2026, 0, 7, 12, 0, 0);
@@ -21,7 +22,7 @@ function makeSnapshot(windows: ProviderUsageSnapshot["windows"]): ProviderUsageS
 
 describe("provider-usage.format", () => {
   it("groups exact auth-profile usage under its provider", () => {
-    const summary: UsageSummary = {
+    const summary: ProviderUsageSummary = {
       updatedAt: now,
       providers: [
         {
@@ -53,9 +54,40 @@ describe("provider-usage.format", () => {
     expect(formatUsageReportLines(summary, { now })).toEqual([
       "Usage:",
       "  OpenAI",
+      "    Week: 20% left",
       "    openai:personal (pro)",
       "      Week: 20% left",
       "    openai:work (team)",
+      "      Week: 75% left",
+    ]);
+  });
+
+  it("preserves direct provider usage alongside exact auth-profile usage", () => {
+    const summary: ProviderUsageSummary = {
+      updatedAt: now,
+      providers: [
+        {
+          provider: "anthropic",
+          displayName: "Claude Admin",
+          windows: [],
+          summary: "Organization spend: $42.00",
+        },
+      ],
+      profiles: [
+        {
+          provider: "anthropic",
+          authProfileId: "anthropic:personal",
+          capturedAt: now,
+          displayName: "Claude",
+          windows: [{ label: "Week", usedPercent: 25 }],
+        },
+      ],
+    };
+
+    expect(formatUsageReportLines(summary, { now })).toEqual([
+      "Usage:",
+      "  Claude Admin: Organization spend: $42.00",
+      "    anthropic:personal",
       "      Week: 75% left",
     ]);
   });

@@ -15,6 +15,10 @@ import { resolveFetch } from "./fetch.js";
 import { resolveProxyFetchFromEnv } from "./net/proxy-fetch.js";
 import { type ProviderAuth, resolveProviderAuths } from "./provider-usage.auth.js";
 import { readProviderUsageProfile } from "./provider-usage.profile.js";
+import type {
+  ProviderUsageProfileSnapshot,
+  ProviderUsageSummary,
+} from "./provider-usage.profile.types.js";
 import {
   PROVIDER_USAGE_TIMEOUT_MS,
   ignoredErrors,
@@ -23,12 +27,7 @@ import {
   resolveProviderUsageDisplayName,
   resolveUsageProviderId,
 } from "./provider-usage.shared.js";
-import type {
-  ProviderUsageProfileSnapshot,
-  ProviderUsageSnapshot,
-  UsageProviderId,
-  UsageSummary,
-} from "./provider-usage.types.js";
+import type { ProviderUsageSnapshot, UsageProviderId } from "./provider-usage.types.js";
 
 // Built-in fallback intentionally reports unsupported until a plugin supplies usage behavior.
 async function fetchProviderUsageSnapshotFallback(params: {
@@ -195,7 +194,7 @@ async function fetchProviderUsageSnapshot(params: {
 /** Loads usage snapshots from configured provider auth and plugin-backed usage hooks. */
 export async function loadProviderUsageSummary(
   opts: UsageSummaryOptions = {},
-): Promise<UsageSummary> {
+): Promise<ProviderUsageSummary> {
   const now = opts.now ?? Date.now();
   const timeoutMs = opts.timeoutMs ?? PROVIDER_USAGE_TIMEOUT_MS;
   const config = opts.config ?? getRuntimeConfig();

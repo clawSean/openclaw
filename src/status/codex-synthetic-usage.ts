@@ -1,11 +1,8 @@
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import { CODEX_APP_SERVER_AUTH_MARKER } from "../agents/model-auth-markers.js";
 import type { ProviderAuth } from "../infra/provider-usage.auth.js";
-import type {
-  ProviderUsageBilling,
-  ProviderUsageSnapshot,
-  UsageSummary,
-} from "../infra/provider-usage.types.js";
+import type { ProviderUsageSummary } from "../infra/provider-usage.profile.types.js";
+import type { ProviderUsageBilling, ProviderUsageSnapshot } from "../infra/provider-usage.types.js";
 
 const CODEX_SYNTHETIC_USAGE_PROVIDER = "openai";
 const CODEX_SYNTHETIC_USAGE_HOOK_PROVIDER = "codex";
@@ -124,9 +121,9 @@ function mergeUsageSnapshots(precedence: Precedence<ProviderUsageSnapshot>): Pro
 }
 
 export function mergeUsageSummaries(
-  base: UsageSummary,
-  extra: UsageSummary | undefined,
-): UsageSummary {
+  base: ProviderUsageSummary,
+  extra: ProviderUsageSummary | undefined,
+): ProviderUsageSummary {
   if (!extra || extra.providers.length === 0) {
     return base;
   }

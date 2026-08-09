@@ -182,8 +182,6 @@ type ResolveApiKeyForProfileParams = {
   agentDir?: string;
   forceRefresh?: boolean;
   allowProfileFallback?: boolean;
-  /** When false, expired OAuth credentials resolve to null without refresh or fallback. */
-  allowRefresh?: boolean;
 };
 
 type SecretDefaults = NonNullable<OpenClawConfig["secrets"]>["defaults"];
@@ -483,7 +481,6 @@ export async function resolveApiKeyForProfile(
       credential: cred,
       cfg,
       forceRefresh: params.forceRefresh,
-      allowRefresh: params.allowRefresh,
     });
     if (!resolved) {
       return null;
@@ -497,9 +494,6 @@ export async function resolveApiKeyForProfile(
       credential: resolved.credential,
     });
   } catch (error) {
-    if (params.allowRefresh === false) {
-      throw error;
-    }
     let refreshedStore =
       error instanceof OAuthManagerRefreshError
         ? error.getRefreshedStore()

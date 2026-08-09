@@ -6,8 +6,8 @@ const resolveProviderUsageAuthWithPluginMock = vi.fn();
 const resolveProviderUsageSnapshotWithPluginMock = vi.fn();
 const fetchMock = vi.fn();
 
-vi.mock("./provider-usage.auth.js", () => ({
-  resolveProviderAuthProfile: (...args: unknown[]) => resolveProviderAuthProfileMock(...args),
+vi.mock("./provider-usage.profile-auth.js", () => ({
+  resolveProviderUsageProfileAuth: (...args: unknown[]) => resolveProviderAuthProfileMock(...args),
 }));
 
 vi.mock("../plugins/provider-runtime.js", () => ({
@@ -74,7 +74,6 @@ describe("readProviderUsageProfile", () => {
           provider: "openai",
           token: "private-token",
           authProfileId: "openai:work",
-          exactProfileRead: true,
           accountId: "account-1",
           email: "private@example.com",
           timeoutMs: 5_000,
