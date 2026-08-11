@@ -139,6 +139,8 @@ async function runOutboundDeliveryWithQueue(
       `Required durable message send is unsupported for ${channel}: unknown-send reconciliation requires exactly one payload`,
     );
   }
+  const queuePolicy = params.queuePolicy ?? "best_effort";
+  let automaticUnknownSendReconciliationAllowed = false;
   if (params.deferredDeliveryAdmissionPassed !== true) {
     const admission = resolveDeferredDeliveryAdmission(
       {
@@ -147,15 +149,19 @@ async function runOutboundDeliveryWithQueue(
         to,
         accountId: params.accountId,
         phase: "live",
+        ...(params.requireUnknownSendReconciliation === true
+          ? { requireUnknownSendReconciliation: true }
+          : {}),
       },
       { agentId: params.session?.agentId },
     );
-    if (admission.status === "permanent_rejection") {
+    if (admission.status !== "allowed") {
       emitPreQueueFailure();
       throw new Error(admission.reason);
     }
+    automaticUnknownSendReconciliationAllowed =
+      admission.automaticUnknownSendReconciliation !== false;
   }
-  const queuePolicy = params.queuePolicy ?? "best_effort";
   const existingStableDelivery = params.deliveryIntentId
     ? await loadPendingDelivery(params.deliveryIntentId)
     : null;
@@ -244,10 +250,14 @@ async function runOutboundDeliveryWithQueue(
         `Required durable message send is unsupported for ${channel}: prepared payload capability mismatch${support.capability ? ` (${support.capability})` : ""}`,
       );
     }
+    // Ordinary inbound finals use a best-effort queue policy. Only the explicit
+    // bestEffort flag opts out of exact reconciliation after provider admission.
     unknownSendReconciliationEnabled =
       support.ok &&
       (params.requireUnknownSendReconciliation === true ||
-        support.automaticUnknownSendReconciliation);
+        (params.bestEffort !== true &&
+          automaticUnknownSendReconciliationAllowed &&
+          support.automaticUnknownSendReconciliation));
   }
   const deliveryParams: DeliverOutboundPayloadsParams = {
     ...params,

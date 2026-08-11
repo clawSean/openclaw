@@ -16,6 +16,7 @@ import { probeIMessage } from "./probe.js";
 import { resolveIMessageRemoteHost } from "./remote-host.js";
 import { sendMessageIMessage } from "./send.js";
 import { imessageSetupWizard } from "./setup-surface.js";
+export { reconcileIMessageUnknownSend } from "./unknown-send-reconciliation.js";
 
 type IMessageSendFn = typeof sendMessageIMessage;
 
@@ -31,6 +32,8 @@ export async function sendIMessageOutbound(params: {
   accountId?: string;
   deps?: { [channelId: string]: unknown };
   replyToId?: string;
+  deliveryQueueId?: string;
+  onPlatformSendDispatch?: NonNullable<Parameters<IMessageSendFn>[2]["onPlatformSendDispatch"]>;
   conversationReadOrigin?: "delegated" | "direct-operator";
   onDeliveryResult?: NonNullable<Parameters<IMessageSendFn>[2]["onDeliveryResult"]>;
 }) {
@@ -55,6 +58,8 @@ export async function sendIMessageOutbound(params: {
     maxBytes,
     accountId: params.accountId ?? undefined,
     replyToId: params.replyToId ?? undefined,
+    deliveryQueueId: params.deliveryQueueId,
+    onPlatformSendDispatch: params.onPlatformSendDispatch,
     conversationReadOrigin: params.conversationReadOrigin,
     ...(params.onDeliveryResult ? { onDeliveryResult: params.onDeliveryResult } : {}),
   });

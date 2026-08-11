@@ -13,6 +13,7 @@ import {
 } from "./monitor/sanitize-outbound.js";
 import { resolveIMessageRemoteHost } from "./remote-host.js";
 import { loadFreshIMessageReplyCacheForTest } from "./test-support/runtime.js";
+import { deriveIMessageAttemptId } from "./unknown-send-reconciliation-core.js";
 
 type ApprovalReactionsModule = typeof import("./approval-reactions.js");
 type ClientModule = typeof import("./client.js");
@@ -3575,6 +3576,138 @@ describe("sendMessageIMessage receipts", () => {
     ).rejects.toThrow("imsg rpc error (send)");
 
     expect(runCliJson).not.toHaveBeenCalled();
+  });
+});
+
+describe("sendMessageIMessage tracked durable attempts", () => {
+  beforeEach(async () => {
+    await loadFreshSendModule();
+  });
+
+  afterEach(() => {
+    clearIMessageApprovalReactionTargetsForTest();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+  });
+
+  it("uses send.tracked with the deterministic caller-owned GUID", async () => {
+    const deliveryQueueId = "cron:daily:report";
+    const attemptId = deriveIMessageAttemptId(deliveryQueueId);
+    const order: string[] = [];
+    const request = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+      order.push("request");
+      return {
+        attempt_id: params.attempt_id,
+        guid: params.attempt_id,
+        message_id: params.attempt_id,
+        service: "iMessage",
+      };
+    });
+    const client = {
+      request,
+      stop: vi.fn(async () => {}),
+    } as unknown as IMessageRpcClient;
+
+    const result = await sendMessageIMessage("chat_guid:iMessage;+;group-guid", "once", {
+      config: IMESSAGE_TEST_CFG,
+      client,
+      deliveryQueueId,
+      onPlatformSendDispatch: async () => {
+        order.push("dispatch");
+      },
+    });
+
+    expect(request).toHaveBeenCalledWith(
+      "send.tracked",
+      expect.objectContaining({
+        attempt_id: attemptId,
+        text: "once",
+        transport: "bridge",
+      }),
+      { timeoutMs: 180_000 },
+    );
+    expect(result).toMatchObject({ messageId: attemptId, guid: attemptId });
+    expect(order).toEqual(["dispatch", "request"]);
+  });
+
+  it("does not retry or use sent-row recovery after a tracked-send timeout", async () => {
+    const client = createRejectingClient(new Error("imsg rpc timeout (send.tracked)"));
+    const resolveSentMessageGuidImpl = vi.fn(async () => "foreign-guid");
+
+    await expect(
+      sendMessageIMessage("chat_guid:iMessage;+;group-guid", "once", {
+        config: IMESSAGE_TEST_CFG,
+        client,
+        deliveryQueueId: "queue-timeout",
+        resolveSentMessageGuidImpl,
+      }),
+    ).rejects.toThrow("imsg rpc timeout (send.tracked)");
+
+    expect(getClientMocks(client).request).toHaveBeenCalledOnce();
+    expect(resolveSentMessageGuidImpl).not.toHaveBeenCalled();
+  });
+
+  it("does not call imsg when durable dispatch ownership cannot be persisted", async () => {
+    const client = createClient({});
+
+    await expect(
+      sendMessageIMessage("chat_guid:iMessage;+;group-guid", "once", {
+        config: IMESSAGE_TEST_CFG,
+        client,
+        deliveryQueueId: "queue-dispatch-fence",
+        onPlatformSendDispatch: async () => {
+          throw new Error("dispatch fence unavailable");
+        },
+      }),
+    ).rejects.toThrow("dispatch fence unavailable");
+
+    expect(getClientMocks(client).request).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when send.tracked does not echo the exact attempt identity", async () => {
+    const client = createClient({
+      attempt_id: "11111111-1111-5111-8111-111111111111",
+      guid: "11111111-1111-5111-8111-111111111111",
+      message_id: "11111111-1111-5111-8111-111111111111",
+    });
+
+    await expect(
+      sendMessageIMessage("chat_guid:iMessage;+;group-guid", "once", {
+        config: IMESSAGE_TEST_CFG,
+        client,
+        deliveryQueueId: "queue-mismatch",
+      }),
+    ).rejects.toThrow("mismatched attempt identity");
+  });
+
+  it("rejects tracked media and AppleScript before provider I/O", async () => {
+    const resolveAttachmentImpl = vi.fn(async () => ({
+      path: "/tmp/image.png",
+      contentType: "image/png",
+    }));
+    const client = createClient({});
+
+    await expect(
+      sendMessageIMessage("chat_guid:iMessage;+;group-guid", "caption", {
+        config: IMESSAGE_TEST_CFG,
+        client,
+        deliveryQueueId: "queue-media",
+        mediaUrl: "/tmp/image.png",
+        resolveAttachmentImpl,
+      }),
+    ).rejects.toThrow("supports text messages only");
+    expect(resolveAttachmentImpl).not.toHaveBeenCalled();
+    expect(getClientMocks(client).request).not.toHaveBeenCalled();
+
+    await expect(
+      sendMessageIMessage("chat_guid:iMessage;+;group-guid", "once", {
+        config: { channels: { imessage: { sendTransport: "applescript" } } },
+        client,
+        deliveryQueueId: "queue-applescript",
+      }),
+    ).rejects.toThrow("requires bridge transport");
+    expect(getClientMocks(client).request).not.toHaveBeenCalled();
   });
 });
 

@@ -238,6 +238,10 @@ function needsUnknownSendReconciliation(entry: QueuedDelivery): boolean {
   );
 }
 
+function requiresPreAdmissionReconciliation(entry: QueuedDelivery): boolean {
+  return entry.requireUnknownSendReconciliation === true && needsUnknownSendReconciliation(entry);
+}
+
 function hasActiveDeliveryOwner(entry: QueuedDelivery, now: number): boolean {
   return (
     (typeof entry.completionRetention === "object" ||
@@ -374,7 +378,8 @@ async function applyRecoveryDeliveryAdmission(params: {
   log: RecoveryLogger;
   stateDir?: string;
   logLabel: string;
-}): Promise<"allowed" | "failed" | "not_pending"> {
+  onFailed?: (entry: QueuedDelivery, errMsg: string) => void;
+}): Promise<"allowed" | "deferred" | "failed" | "not_pending"> {
   const admission = resolveDeferredDeliveryAdmission(
     {
       cfg: params.cfg,
@@ -382,11 +387,20 @@ async function applyRecoveryDeliveryAdmission(params: {
       to: params.entry.to,
       accountId: params.entry.accountId,
       phase: "recovery",
+      ...(params.entry.requireUnknownSendReconciliation === true
+        ? { requireUnknownSendReconciliation: true }
+        : {}),
     },
     { agentId: params.entry.session?.agentId },
   );
   if (admission.status === "allowed") {
     return "allowed";
+  }
+  if (admission.status === "deferred") {
+    params.log.info(
+      `${params.logLabel}: entry ${params.entry.id} deferred before recovery: ${admission.reason}`,
+    );
+    return "deferred";
   }
   await markDurableDeliveryFailedBestEffort(params.entry, params.log, params.stateDir);
   const failed = await terminalizeWithMediaRetention(params, async (spoolPaths) => {
@@ -404,6 +418,7 @@ async function applyRecoveryDeliveryAdmission(params: {
   }
   emitRecoveredTerminalFailure(params.entry, admission.reason);
   emitQueuedAuditTerminals(params.entry, () => queuedDeadLetterAuditTerminals(params.entry));
+  params.onFailed?.(params.entry, admission.reason);
   params.log.warn(
     `${params.logLabel}: entry ${params.entry.id} permanently rejected before recovery: ${admission.reason}`,
   );
@@ -740,9 +755,11 @@ async function drainQueuedEntry(opts: {
   deliver: DeliverFn;
   log: RecoveryLogger;
   stateDir?: string;
+  logLabel?: string;
+  recoveryDeliveryAdmissionPassed?: true;
   onRecovered?: (entry: QueuedDelivery) => void;
   onFailed?: (entry: QueuedDelivery, errMsg: string) => void;
-}): Promise<"recovered" | "failed" | "moved-to-failed" | "already-gone"> {
+}): Promise<"recovered" | "failed" | "moved-to-failed" | "already-gone" | "deferred"> {
   const { entry } = opts;
   const maxRetries = resolveMaxRetries(entry);
   const attemptBudgetExhausted = resolveAttemptCount(entry) >= maxRetries;
@@ -862,6 +879,25 @@ async function drainQueuedEntry(opts: {
         }
       }
       return "failed";
+    }
+  }
+  // Admission governs replay, not reconciliation. Ambiguous sends must query
+  // authoritative provider state before a cold process-local capability cache
+  // is allowed to defer or reject the row.
+  if (opts.recoveryDeliveryAdmissionPassed !== true) {
+    const admission = await applyRecoveryDeliveryAdmission({
+      entry,
+      cfg: opts.cfg,
+      log: opts.log,
+      stateDir: opts.stateDir,
+      logLabel: opts.logLabel ?? "Recovery",
+      onFailed: opts.onFailed,
+    });
+    if (admission !== "allowed") {
+      if (admission === "failed" || admission === "deferred") {
+        return admission;
+      }
+      return "already-gone";
     }
   }
   const payloadOutcomes: OutboundPayloadDeliveryOutcome[] = [];
@@ -1247,15 +1283,19 @@ export async function drainPendingDeliveriesCore(opts: {
         if (hasActiveDeliveryOwner(currentEntry, Date.now())) {
           return;
         }
-        const admission = await applyRecoveryDeliveryAdmission({
-          entry: currentEntry,
-          cfg: opts.cfg,
-          log: opts.log,
-          stateDir: opts.stateDir,
-          logLabel: opts.logLabel,
-        });
-        if (admission !== "allowed") {
-          return;
+        let recoveryDeliveryAdmissionPassed: true | undefined;
+        if (!requiresPreAdmissionReconciliation(currentEntry)) {
+          const admission = await applyRecoveryDeliveryAdmission({
+            entry: currentEntry,
+            cfg: opts.cfg,
+            log: opts.log,
+            stateDir: opts.stateDir,
+            logLabel: opts.logLabel,
+          });
+          if (admission !== "allowed") {
+            return;
+          }
+          recoveryDeliveryAdmissionPassed = true;
         }
 
         const currentDecision = opts.selectEntry(currentEntry, Date.now());
@@ -1314,6 +1354,8 @@ export async function drainPendingDeliveriesCore(opts: {
           deliver: opts.deliver,
           log: opts.log,
           stateDir: opts.stateDir,
+          logLabel: opts.logLabel,
+          recoveryDeliveryAdmissionPassed,
           onFailed: (failedEntry, errMsg) => {
             if (isPermanentDeliveryError(errMsg)) {
               opts.log.warn(
@@ -1384,18 +1426,22 @@ export async function recoverPendingDeliveries(opts: {
         opts.log.info(`Recovery skipped for delivery ${currentEntry.id}: active platform owner`);
         return "continue";
       }
-      const admission = await applyRecoveryDeliveryAdmission({
-        entry: currentEntry,
-        cfg: opts.cfg,
-        log: opts.log,
-        stateDir: opts.stateDir,
-        logLabel: "Recovery",
-      });
-      if (admission !== "allowed") {
-        if (admission === "failed") {
-          summary.failed += 1;
+      let recoveryDeliveryAdmissionPassed: true | undefined;
+      if (!requiresPreAdmissionReconciliation(currentEntry)) {
+        const admission = await applyRecoveryDeliveryAdmission({
+          entry: currentEntry,
+          cfg: opts.cfg,
+          log: opts.log,
+          stateDir: opts.stateDir,
+          logLabel: "Recovery",
+        });
+        if (admission !== "allowed") {
+          if (admission === "failed") {
+            summary.failed += 1;
+          }
+          return "continue";
         }
-        return "continue";
+        recoveryDeliveryAdmissionPassed = true;
       }
 
       const maxRetries = resolveMaxRetries(currentEntry);
@@ -1440,6 +1486,8 @@ export async function recoverPendingDeliveries(opts: {
         deliver: opts.deliver,
         log: opts.log,
         stateDir: opts.stateDir,
+        logLabel: "Recovery",
+        recoveryDeliveryAdmissionPassed,
         onRecovered: (recoveredEntry) => {
           summary.recovered += 1;
           opts.log.info(`Recovered delivery ${recoveredEntry.id} on ${recoveredEntry.channel}`);

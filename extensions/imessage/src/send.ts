@@ -70,6 +70,10 @@ import {
   normalizeIMessageHandle,
   parseIMessageTarget,
 } from "./targets.js";
+import {
+  deriveIMessageAttemptId,
+  IMESSAGE_TRACKED_SEND_METHOD,
+} from "./unknown-send-reconciliation-core.js";
 
 type ParsedIMessageTarget = ReturnType<typeof parseIMessageTarget>;
 const MIN_PENDING_PERSISTED_ECHO_TTL_MS = 60_000;
@@ -90,6 +94,7 @@ type IMessageSendOpts = {
   accountId?: string;
   conversationReadOrigin?: "delegated" | "direct-operator";
   replyToId?: string;
+  deliveryQueueId?: string;
   mediaUrl?: string;
   mediaAccess?: OutboundMediaAccess;
   mediaLocalRoots?: readonly string[];
@@ -114,6 +119,7 @@ type IMessageSendOpts = {
   }) => Promise<IMessageRpcClient>;
   withRemoteFile?: typeof withIMessageRemoteFile;
   runCliJson?: (args: readonly string[]) => Promise<Record<string, unknown>>;
+  onPlatformSendDispatch?: () => Promise<void>;
   onDeliveryResult?: (result: IMessageDeliveryProgress) => Promise<void> | void;
   resolveMessageGuidImpl?: (params: {
     dbPath?: string;
@@ -850,6 +856,17 @@ export async function sendMessageIMessage(
     resolveTargetService(target) ??
     (account.config.service as IMessageService | undefined);
   const sendTransport = (account.config.sendTransport ?? "auto") as IMessageSendTransport;
+  const trackedAttemptId = opts.deliveryQueueId
+    ? deriveIMessageAttemptId(opts.deliveryQueueId)
+    : undefined;
+  if (trackedAttemptId && sendTransport === "applescript") {
+    throw new Error(
+      "Exact iMessage send reconciliation requires bridge transport; sendTransport=applescript is unsupported",
+    );
+  }
+  if (trackedAttemptId && opts.mediaUrl?.trim()) {
+    throw new Error("Exact iMessage send reconciliation supports text messages only");
+  }
   const resolvedReplyToId = resolveAuthorizedIMessageReplyReference({
     account,
     target,
@@ -1029,7 +1046,8 @@ export async function sendMessageIMessage(
     text: message,
     service: service || "auto",
     region,
-    transport: sendTransport,
+    transport: trackedAttemptId ? "bridge" : sendTransport,
+    ...(trackedAttemptId ? { attempt_id: trackedAttemptId } : {}),
   };
   if (resolvedReplyToId) {
     params.reply_to = resolvedReplyToId;
@@ -1068,8 +1086,15 @@ export async function sendMessageIMessage(
     await client.stop();
   };
   const requestSuccessfulSend = async (sendParams: Record<string, unknown>) => {
-    const request = async (nativeParams: Record<string, unknown>) =>
-      await requestIMessageRpcSend(client, "send", nativeParams, timeoutMs);
+    const request = async (nativeParams: Record<string, unknown>) => {
+      await opts.onPlatformSendDispatch?.();
+      return await requestIMessageRpcSend(
+        client,
+        trackedAttemptId ? IMESSAGE_TRACKED_SEND_METHOD : "send",
+        nativeParams,
+        timeoutMs,
+      );
+    };
     const response = filePath
       ? await withOriginalIMessageAttachmentPath(filePath, async (attachmentPath) => {
           if (remoteHost) {
@@ -1105,7 +1130,11 @@ export async function sendMessageIMessage(
       }
       result = await requestSuccessfulSend(params);
     } catch (error) {
-      if (resolvedReplyToId && isThreadedReplyUnsupportedError(error)) {
+      if (trackedAttemptId) {
+        // The caller-owned GUID is the only retry/reconciliation key. Never
+        // retry or fall back after an uncertain tracked-send result.
+        throw error;
+      } else if (resolvedReplyToId && isThreadedReplyUnsupportedError(error)) {
         // #99638: the transport cannot deliver a threaded reply, so resend the
         // message unthreaded rather than dropping it. Covers text and media
         // replies alike (both carry reply_to through this send). One retry with
@@ -1141,6 +1170,16 @@ export async function sendMessageIMessage(
         } else {
           throw error;
         }
+      }
+    }
+    if (trackedAttemptId) {
+      const returnedIds = [result.attempt_id, result.guid, result.message_id];
+      if (
+        returnedIds.some(
+          (value) => typeof value !== "string" || value.trim().toLowerCase() !== trackedAttemptId,
+        )
+      ) {
+        throw new Error("imsg send.tracked returned mismatched attempt identity");
       }
     }
     const resolvedId = resolveMessageId(result);

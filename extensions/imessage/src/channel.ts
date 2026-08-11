@@ -60,6 +60,7 @@ import {
   normalizeIMessageHandle,
   parseIMessageTarget,
 } from "./targets.js";
+import { resolveIMessageExactDeliveryAdmission } from "./unknown-send-reconciliation-core.js";
 
 const loadIMessageChannelRuntime = createLazyRuntimeModule(() => import("./channel.runtime.js"));
 
@@ -138,15 +139,26 @@ async function registerDeliveredIMessageApprovalPayload(
 const imessageMessageAdapter = defineChannelMessageAdapter({
   id: "imessage",
   durableFinal: {
+    automaticUnknownSendReconciliation: true,
     capabilities: {
       text: true,
       media: true,
       replyTo: true,
       messageSendingHooks: true,
+      reconcileUnknownSend: true,
     },
+    admitDeferredDelivery: resolveIMessageExactDeliveryAdmission,
+    reconcileUnknownSendKinds: { text: true },
+    reconcileUnknownSend: async (ctx) =>
+      await (await loadIMessageChannelRuntime()).reconcileIMessageUnknownSend(ctx),
   },
   send: {
     text: async (ctx) => {
+      if (ctx.deliveryQueueId && (ctx.deliveryPartIndex !== 0 || ctx.deliveryPartCount !== 1)) {
+        throw new Error(
+          "Exact iMessage send reconciliation requires exactly one platform text send",
+        );
+      }
       const result = await (
         await loadIMessageChannelRuntime()
       ).sendIMessageOutbound({
@@ -156,6 +168,8 @@ const imessageMessageAdapter = defineChannelMessageAdapter({
         accountId: ctx.accountId ?? undefined,
         deps: (ctx as typeof ctx & IMessageMessageContextExtras).deps,
         replyToId: ctx.replyToId ?? undefined,
+        deliveryQueueId: ctx.deliveryQueueId,
+        onPlatformSendDispatch: ctx.onPlatformSendDispatch,
         conversationReadOrigin: (ctx as typeof ctx & IMessageMessageContextExtras)
           .conversationReadOrigin,
       });

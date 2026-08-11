@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMessageReceiptFromOutboundResults } from "../../channels/message/receipt.js";
+import { sendDurableMessageBatchCore } from "../../channels/message/send.js";
 import type { ChannelMessageSendTextContext } from "../../channels/message/types.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry.js";
@@ -98,4 +99,65 @@ describe("exact Matrix delivery queue reconciliation", () => {
       expect(sendText).toHaveBeenCalledOnce();
     },
   );
+
+  it("carries an ordinary durable best-effort final through automatic exact reconciliation", async () => {
+    process.env.OPENCLAW_STATE_DIR = tmpDir;
+    const deliveryIntentId = "cron-direct-delivery:v1:ordinary-best-effort-final";
+    const messageId = "ordinary-best-effort-message";
+    const reconcileUnknownSend = vi.fn();
+    const sendText = vi.fn(async (ctx: ChannelMessageSendTextContext) => {
+      expect(ctx.deliveryQueueId).toBe(deliveryIntentId);
+      await ctx.onPlatformSendDispatch?.();
+      return {
+        messageId,
+        receipt: createMessageReceiptFromOutboundResults({
+          results: [{ channel: "matrix", messageId }],
+          kind: "text",
+        }),
+      };
+    });
+    setActivePluginRegistry(
+      createTestRegistry([
+        {
+          pluginId: "matrix",
+          source: "test",
+          plugin: {
+            ...createOutboundTestPlugin({ id: "matrix", outbound: matrixOutboundForQueueTest }),
+            message: {
+              id: "matrix",
+              durableFinal: {
+                automaticUnknownSendReconciliation: true,
+                capabilities: { text: true, reconcileUnknownSend: true },
+                admitDeferredDelivery: () => ({
+                  status: "allowed",
+                  automaticUnknownSendReconciliation: true,
+                }),
+                reconcileUnknownSendKinds: { text: true },
+                reconcileUnknownSend,
+              },
+              send: { text: sendText },
+            },
+          },
+        },
+      ]),
+    );
+
+    const result = await sendDurableMessageBatchCore({
+      cfg: {} as OpenClawConfig,
+      channel: "matrix",
+      to: "!room:example",
+      payloads: [{ text: "ordinary durable inbound final" }],
+      durability: "best_effort",
+      deliveryIntentId,
+      completionRetention: boundedCronCompletionRetention,
+      reusePendingDeliveryIntent: true,
+    });
+
+    expect(result).toMatchObject({ status: "sent" });
+    expect(sendText).toHaveBeenCalledOnce();
+    expect(reconcileUnknownSend).not.toHaveBeenCalled();
+    expect(
+      getDeliveryQueueEntryStatus(OUTBOUND_DELIVERY_QUEUE_NAME, deliveryIntentId, tmpDir),
+    ).toBe("completed");
+  });
 });

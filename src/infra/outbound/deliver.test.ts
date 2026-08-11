@@ -9,6 +9,7 @@ import { onTrustedMessageAuditEventForTest as onTrustedMessageAuditEvent } from 
 import { chunkText } from "../../auto-reply/chunk.js";
 import { createMessageReceiptFromOutboundResults } from "../../channels/message/receipt.js";
 import type {
+  ChannelMessageDurableFinalAdapter,
   ChannelMessageSendMediaContext,
   ChannelMessageSendTextContext,
 } from "../../channels/message/types.js";
@@ -1131,16 +1132,24 @@ describe("deliverOutboundPayloads", () => {
   });
 
   it("rejects provider-blocked deferred delivery before queue creation or platform work", async () => {
-    const admitDeferredDelivery = vi.fn(() => ({
+    const admitDeferredDelivery = vi.fn<
+      NonNullable<ChannelMessageDurableFinalAdapter["admitDeferredDelivery"]>
+    >(() => ({
       status: "permanent_rejection" as const,
       reason: "unsupported_enterprise_slack_delivery",
     }));
     const messageSendText = vi.fn();
     setMatrixMessageAdapter({
       id: "matrix",
-      durableFinal: { admitDeferredDelivery },
+      durableFinal: {
+        capabilities: { text: true, reconcileUnknownSend: true },
+        admitDeferredDelivery,
+        reconcileUnknownSendKinds: { text: true },
+        reconcileUnknownSend: async () => ({ status: "not_sent" }),
+      },
       send: { text: messageSendText },
     });
+    hookMocks.runner.hasHooks.mockReturnValue(true);
 
     const request = {
       cfg: {},
@@ -1155,6 +1164,9 @@ describe("deliverOutboundPayloads", () => {
     await expect(deliverOutboundPayloads({ ...request, skipQueue: true })).rejects.toThrow(
       "unsupported_enterprise_slack_delivery",
     );
+    await expect(
+      deliverOutboundPayloads({ ...request, requireUnknownSendReconciliation: true }),
+    ).rejects.toThrow("unsupported_enterprise_slack_delivery");
 
     expect(admitDeferredDelivery).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1164,9 +1176,16 @@ describe("deliverOutboundPayloads", () => {
         to: "!room:example",
       }),
     );
+    expect(admitDeferredDelivery.mock.calls[0]?.[0]).not.toHaveProperty(
+      "requireUnknownSendReconciliation",
+    );
+    expect(admitDeferredDelivery).toHaveBeenLastCalledWith(
+      expect.objectContaining({ requireUnknownSendReconciliation: true }),
+    );
     expect(queueMocks.enqueueDelivery).not.toHaveBeenCalled();
-    expect(admitDeferredDelivery).toHaveBeenCalledTimes(2);
+    expect(admitDeferredDelivery).toHaveBeenCalledTimes(3);
     expect(messageSendText).not.toHaveBeenCalled();
+    expect(hookMocks.runner.runReplyPayloadSending).not.toHaveBeenCalled();
     expect(hookMocks.runner.runMessageSending).not.toHaveBeenCalled();
   });
 
@@ -1227,6 +1246,12 @@ describe("deliverOutboundPayloads", () => {
   });
 
   it("automatically enables provider reconciliation for one supported prepared payload", async () => {
+    const admitDeferredDelivery = vi.fn<
+      NonNullable<ChannelMessageDurableFinalAdapter["admitDeferredDelivery"]>
+    >(() => ({
+      status: "allowed" as const,
+      automaticUnknownSendReconciliation: true,
+    }));
     const messageSendText = vi.fn(async (ctx: ChannelMessageSendTextContext) => {
       await ctx.onPlatformSendDispatch?.();
       return {
@@ -1242,6 +1267,7 @@ describe("deliverOutboundPayloads", () => {
       durableFinal: {
         automaticUnknownSendReconciliation: true,
         capabilities: { text: true, reconcileUnknownSend: true },
+        admitDeferredDelivery,
         reconcileUnknownSendKinds: { text: true },
         reconcileUnknownSend: async () => ({ status: "not_sent" }),
       },
@@ -1251,6 +1277,134 @@ describe("deliverOutboundPayloads", () => {
     await deliverMatrix({ queuePolicy: "required" });
 
     expect(requireMockCallArg(queueMocks.enqueueDelivery, "enqueueDelivery")).toMatchObject({
+      requireUnknownSendReconciliation: true,
+    });
+    expect(admitDeferredDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: "live",
+      }),
+    );
+    expect(admitDeferredDelivery.mock.calls[0]?.[0]).not.toHaveProperty(
+      "requireUnknownSendReconciliation",
+    );
+    expect(admitDeferredDelivery.mock.invocationCallOrder[0]).toBeLessThan(
+      queueMocks.enqueueDelivery.mock.invocationCallOrder[0]!,
+    );
+    expect(messageSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryQueueId: "mock-queue-id",
+        deliveryPartIndex: 0,
+        deliveryPartCount: 1,
+      }),
+    );
+  });
+
+  it("keeps ordinary delivery on the legacy path when admission declines automatic reconciliation", async () => {
+    const admitDeferredDelivery = vi.fn<
+      NonNullable<ChannelMessageDurableFinalAdapter["admitDeferredDelivery"]>
+    >(() => ({
+      status: "allowed" as const,
+      automaticUnknownSendReconciliation: false,
+    }));
+    const messageSendText = vi.fn(async (_ctx: ChannelMessageSendTextContext) => ({
+      messageId: "message-adapter-1",
+      receipt: createMessageReceiptFromOutboundResults({
+        results: [{ channel: "matrix", messageId: "message-adapter-1" }],
+        kind: "text",
+      }),
+    }));
+    setMatrixMessageAdapter({
+      id: "matrix",
+      durableFinal: {
+        automaticUnknownSendReconciliation: true,
+        capabilities: { text: true, reconcileUnknownSend: true },
+        admitDeferredDelivery,
+        reconcileUnknownSendKinds: { text: true },
+        reconcileUnknownSend: async () => ({ status: "not_sent" }),
+      },
+      send: { text: messageSendText },
+    });
+
+    await deliverMatrix({ queuePolicy: "required" });
+
+    expect(
+      requireMockCallArg(queueMocks.enqueueDelivery, "enqueueDelivery")
+        .requireUnknownSendReconciliation,
+    ).toBeUndefined();
+    expect(admitDeferredDelivery.mock.calls[0]?.[0]).not.toHaveProperty(
+      "requireUnknownSendReconciliation",
+    );
+    expect(messageSendText.mock.calls[0]?.[0].deliveryQueueId).toBeUndefined();
+  });
+
+  it("keeps explicit bestEffort delivery on the legacy path when automatic reconciliation is available", async () => {
+    const admitDeferredDelivery = vi.fn<
+      NonNullable<ChannelMessageDurableFinalAdapter["admitDeferredDelivery"]>
+    >(() => ({
+      status: "allowed" as const,
+      automaticUnknownSendReconciliation: true,
+    }));
+    const messageSendText = vi.fn(async (_ctx: ChannelMessageSendTextContext) => ({
+      messageId: "message-adapter-1",
+      receipt: createMessageReceiptFromOutboundResults({
+        results: [{ channel: "matrix", messageId: "message-adapter-1" }],
+        kind: "text",
+      }),
+    }));
+    setMatrixMessageAdapter({
+      id: "matrix",
+      durableFinal: {
+        automaticUnknownSendReconciliation: true,
+        capabilities: { text: true, reconcileUnknownSend: true },
+        admitDeferredDelivery,
+        reconcileUnknownSendKinds: { text: true },
+        reconcileUnknownSend: async () => ({ status: "not_sent" }),
+      },
+      send: { text: messageSendText },
+    });
+
+    await deliverMatrix({ bestEffort: true });
+
+    expect(
+      requireMockCallArg(queueMocks.enqueueDelivery, "enqueueDelivery")
+        .requireUnknownSendReconciliation,
+    ).toBeUndefined();
+    expect(messageSendText.mock.calls[0]?.[0].deliveryQueueId).toBeUndefined();
+  });
+
+  it("automatically reconciles an ordinary durable best-effort queue policy", async () => {
+    const admitDeferredDelivery = vi.fn<
+      NonNullable<ChannelMessageDurableFinalAdapter["admitDeferredDelivery"]>
+    >(() => ({
+      status: "allowed" as const,
+      automaticUnknownSendReconciliation: true,
+    }));
+    const messageSendText = vi.fn(async (ctx: ChannelMessageSendTextContext) => {
+      await ctx.onPlatformSendDispatch?.();
+      return {
+        messageId: "message-adapter-1",
+        receipt: createMessageReceiptFromOutboundResults({
+          results: [{ channel: "matrix", messageId: "message-adapter-1" }],
+          kind: "text",
+        }),
+      };
+    });
+    setMatrixMessageAdapter({
+      id: "matrix",
+      durableFinal: {
+        automaticUnknownSendReconciliation: true,
+        capabilities: { text: true, reconcileUnknownSend: true },
+        admitDeferredDelivery,
+        reconcileUnknownSendKinds: { text: true },
+        reconcileUnknownSend: async () => ({ status: "not_sent" }),
+      },
+      send: { text: messageSendText },
+    });
+
+    await deliverMatrix({ queuePolicy: "best_effort" });
+
+    expect(requireMockCallArg(queueMocks.enqueueDelivery, "enqueueDelivery")).toMatchObject({
+      queuePolicy: "best_effort",
       requireUnknownSendReconciliation: true,
     });
     expect(messageSendText).toHaveBeenCalledWith(

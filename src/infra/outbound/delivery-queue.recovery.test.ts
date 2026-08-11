@@ -507,15 +507,16 @@ describe("delivery-queue recovery", () => {
           accountId: "enterprise",
           payloads: [{ text: "blocked" }],
         });
-    if (stableAttempt) {
-      await enqueueClaimedRecoveryDelivery(id, {
-        channel: "slack",
-        to: "C123",
-        accountId: "enterprise",
-        payloads: [{ text: "disabled account must never be replayed" }],
-        completionRetention: BOUNDED_COMPLETION_RETENTION,
-      });
-    }
+    const producerClaimId = stableAttempt
+      ? await enqueueClaimedRecoveryDelivery(id, {
+          channel: "slack",
+          to: "C123",
+          accountId: "enterprise",
+          payloads: [{ text: "disabled account must never be replayed" }],
+          completionRetention: BOUNDED_COMPLETION_RETENTION,
+          requireUnknownSendReconciliation: true,
+        })
+      : undefined;
     if (!stableAttempt) {
       setQueuedEntryState(tmpDir(), id, {
         retryCount: MAX_RETRIES,
@@ -524,12 +525,19 @@ describe("delivery-queue recovery", () => {
         platformSendStartedAt: Date.now(),
       });
     }
-    const admitDeferredDelivery = vi.fn(() => ({
-      status: "permanent_rejection" as const,
-      reason: "unsupported_enterprise_slack_delivery",
-    }));
+    const order: string[] = [];
+    const admitDeferredDelivery = vi.fn(() => {
+      order.push("admit");
+      return {
+        status: "permanent_rejection" as const,
+        reason: "unsupported_enterprise_slack_delivery",
+      };
+    });
     const reconcileUnknownSend = stableAttempt
-      ? vi.fn().mockResolvedValue({ status: "not_sent" })
+      ? vi.fn().mockImplementation(async () => {
+          order.push("reconcile");
+          return { status: "not_sent" } as const;
+        })
       : vi.fn();
     resolveOutboundChannelMessageAdapterMock.mockReturnValue({
       durableFinal: {
@@ -546,15 +554,18 @@ describe("delivery-queue recovery", () => {
         accountId: "enterprise",
         channel: "slack",
         phase: "recovery",
+        ...(stableAttempt ? { requireUnknownSendReconciliation: true } : {}),
         ...(stableAttempt ? {} : { to: "C123" }),
       }),
     );
-    expect(reconcileUnknownSend).not.toHaveBeenCalled();
+    expect(reconcileUnknownSend).toHaveBeenCalledTimes(stableAttempt ? 1 : 0);
+    expect(order).toEqual(stableAttempt ? ["reconcile", "admit"] : ["admit"]);
     expect(deliver).not.toHaveBeenCalled();
     expect(result).toEqual(RECOVERY_SUMMARY.failed);
     if (stableAttempt) {
       expect(await loadPendingDeliveries(tmpDir())).toEqual([]);
       expect(readOutboundQueueStatus(tmpDir(), id)).toBe("failed");
+      expect(producerClaimId).toEqual(expect.any(String));
     } else {
       expect(readOutboundQueueStatus(tmpDir(), id)).toBeUndefined();
       expectPayloadAudits(capture?.auditEvents ?? [], id, [
@@ -565,6 +576,80 @@ describe("delivery-queue recovery", () => {
       });
       await runRecovery({ deliver });
       expect(deliver).not.toHaveBeenCalled();
+    }
+  });
+  it("keeps an expired exact row pending while provider admission is not authoritative", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-13T00:00:00.000Z"));
+    try {
+      const id = "cron-direct-delivery:v1:deferred-cold-admission";
+      await enqueueDeliveryOnce(
+        {
+          channel: "imessage",
+          to: "+15555550123",
+          payloads: [{ text: "send exactly once after the capability probe" }],
+          queuePolicy: "required",
+          completionRetention: BOUNDED_COMPLETION_RETENTION,
+          requireUnknownSendReconciliation: true,
+        },
+        id,
+        tmpDir(),
+      );
+      const initialClaim = await claimDeliveryPlatformSendAttempt(id, tmpDir());
+      expect(initialClaim).toEqual(expect.any(String));
+      vi.advanceTimersByTime(31_000);
+
+      let providerReady = false;
+      const admitDeferredDelivery = vi.fn(() =>
+        providerReady
+          ? ({ status: "allowed" } as const)
+          : ({ status: "deferred", reason: "capability probe pending" } as const),
+      );
+      resolveOutboundChannelMessageAdapterMock.mockReturnValue({
+        durableFinal: { admitDeferredDelivery },
+      });
+      const deliver = vi.fn(async (params: Parameters<DeliverFn>[0]) => {
+        if (!params.deliveryProducerClaimId) {
+          throw new Error("recovered exact send must own its platform attempt");
+        }
+        await markDeliveryPlatformSendAttemptStarted(
+          id,
+          tmpDir(),
+          { replyToId: null },
+          params.deliveryProducerClaimId,
+        );
+        return [{ channel: "imessage", messageId: "tracked-message" }];
+      });
+
+      const deferred = await runRecovery({ deliver });
+
+      expect(deferred.result).toEqual(RECOVERY_SUMMARY.empty);
+      expect(deliver).not.toHaveBeenCalled();
+      expectMockMessageContaining(deferred.log.info, "deferred before recovery");
+      expect(await loadPendingDeliveries(tmpDir())).toEqual([
+        expect.objectContaining({
+          id,
+          recoveryState: "producer_claimed",
+          producerClaimId: initialClaim,
+          retryCount: 0,
+        }),
+      ]);
+
+      providerReady = true;
+      const recovered = await runRecovery({ deliver });
+
+      expect(recovered.result).toEqual(RECOVERY_SUMMARY.recovered);
+      expect(deliver).toHaveBeenCalledOnce();
+      expect(admitDeferredDelivery).toHaveBeenCalledTimes(2);
+      expect(admitDeferredDelivery).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          phase: "recovery",
+          requireUnknownSendReconciliation: true,
+        }),
+      );
+      expect(readOutboundQueueStatus(tmpDir(), id)).toBe("completed");
+    } finally {
+      vi.useRealTimers();
     }
   });
   it.each([
@@ -1041,6 +1126,7 @@ describe("delivery-queue recovery", () => {
       payloads: [{ text: "the platform already delivered this permanent intent" }],
       completionRetention: "permanent",
       requiresProducerClaim: true,
+      requireUnknownSendReconciliation: true,
     });
     await markDeliveryPlatformOutcomeUnknown(id, tmpDir(), platformSendAttemptId);
     setQueuedEntryState(tmpDir(), id, {
@@ -1050,11 +1136,16 @@ describe("delivery-queue recovery", () => {
     const reconcileUnknownSend = vi
       .fn()
       .mockResolvedValue(reconciledSent("reconciled-permanent-message"));
-    installUnknownSendAdapter(reconcileUnknownSend);
+    const admitDeferredDelivery = vi.fn(() => ({
+      status: "permanent_rejection" as const,
+      reason: "cold capability cache",
+    }));
+    installUnknownSendAdapter(reconcileUnknownSend, { admitDeferredDelivery });
     const deliver = vi.fn();
     const { result } = await runRecovery({ deliver });
     expect(result).toMatchObject({ recovered: 1, failed: 0 });
     expect(reconcileUnknownSend).toHaveBeenCalledOnce();
+    expect(admitDeferredDelivery).not.toHaveBeenCalled();
     expect(deliver).not.toHaveBeenCalled();
     expect(readOutboundQueueStatus(tmpDir(), id)).toBe("completed");
     expect(await loadPendingDeliveries(tmpDir())).toHaveLength(0);

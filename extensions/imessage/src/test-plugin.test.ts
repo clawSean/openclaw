@@ -344,8 +344,65 @@ describe("imessagePlugin contracts", () => {
         messageSendingHooks: () => {
           expect(sendText).toBeTypeOf("function");
         },
+        reconcileUnknownSend: () => {
+          expect(adapter.durableFinal?.reconcileUnknownSend).toBeTypeOf("function");
+        },
       },
     });
+  });
+
+  it("automatically opts normal durable text sends into exact reconciliation", () => {
+    const durableFinal = requireMessageAdapter().durableFinal;
+
+    expect(durableFinal?.automaticUnknownSendReconciliation).toBe(true);
+    expect(durableFinal?.reconcileUnknownSendKinds).toEqual({ text: true });
+    expect(durableFinal?.reconcileUnknownSend).toBeTypeOf("function");
+  });
+
+  it("forwards one exact queue id and rejects multi-part tracked sends before provider I/O", async () => {
+    const sendText = requireMessageSendText(requireMessageAdapter());
+    const sendIMessage = vi.fn(async () => ({
+      messageId: "tracked-guid",
+      sentText: "once",
+      receipt: createMessageReceiptFromOutboundResults({
+        results: [{ channel: "imessage", messageId: "tracked-guid" }],
+        kind: "text",
+      }),
+    }));
+
+    await sendText({
+      cfg: {} as never,
+      to: "+15551234567",
+      text: "once",
+      deliveryQueueId: "queue-1",
+      deliveryPartIndex: 0,
+      deliveryPartCount: 1,
+      deps: { imessage: sendIMessage },
+    } as Parameters<typeof sendText>[0] & {
+      deps: { imessage: typeof sendIMessage };
+    });
+
+    expect(sendIMessage).toHaveBeenCalledWith(
+      "+15551234567",
+      "once",
+      expect.objectContaining({ deliveryQueueId: "queue-1" }),
+    );
+
+    sendIMessage.mockClear();
+    await expect(
+      sendText({
+        cfg: {} as never,
+        to: "+15551234567",
+        text: "split",
+        deliveryQueueId: "queue-2",
+        deliveryPartIndex: 0,
+        deliveryPartCount: 2,
+        deps: { imessage: sendIMessage },
+      } as Parameters<typeof sendText>[0] & {
+        deps: { imessage: typeof sendIMessage };
+      }),
+    ).rejects.toThrow("requires exactly one platform text send");
+    expect(sendIMessage).not.toHaveBeenCalled();
   });
 
   it.each(["message", "outbound"] as const)(

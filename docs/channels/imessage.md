@@ -533,6 +533,20 @@ See [ACP Agents](/tools/acp-agents) for shared ACP binding behavior.
 
   </Accordion>
 
+  <Accordion title="Exact recovery for durable text delivery">
+    Single-part durable iMessage text sends automatically use a caller-owned attempt UUID when the installed `imsg` advertises both `send.tracked` and `message.send_status`. If the send result is lost, OpenClaw queries that exact UUID instead of matching message history by recipient, text, or timestamp.
+
+    This path is intentionally narrow:
+
+    - it supports exactly one platform text message per durable intent
+    - it forces bridge transport and never falls back to AppleScript
+    - attachments, multi-part sends, and `sendTransport: "applescript"` are ineligible for automatic exact recovery and keep their existing behavior; they are rejected before persistence or provider I/O only when a caller explicitly requires exact reconciliation
+    - callers that explicitly set `bestEffort: true` or disable reconciliation keep their existing transport and fallback behavior; the ordinary durable final-reply route may still use a best-effort queue policy while opting into exact reconciliation
+
+    Refresh `openclaw channels status --probe` after updating `imsg`; a required send stays fail-closed until both RPC methods appear in the cached capability probe. During restart recovery, a not-yet-populated probe cache leaves a pre-dispatch intent pending for a later retry instead of marking it failed.
+
+  </Accordion>
+
   <Accordion title="Addressing formats">
     Preferred explicit targets:
 

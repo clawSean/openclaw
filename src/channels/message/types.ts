@@ -315,7 +315,16 @@ export type ChannelMessageUnknownSendReconciliationResult =
 
 /** Provider decision made before core persists or replays a deferred delivery. */
 export type ChannelMessageDeferredDeliveryAdmissionResult =
-  | { status: "allowed" }
+  | {
+      status: "allowed";
+      /** Per-delivery narrowing of the adapter's static automatic reconciliation opt-in. */
+      automaticUnknownSendReconciliation?: boolean;
+    }
+  | {
+      /** Provider readiness is not yet authoritative; live callers fail and recovery keeps custody. */
+      status: "deferred";
+      reason: string;
+    }
   | { status: "permanent_rejection"; reason: string };
 
 /** Minimal context available at deferred-delivery admission boundaries. */
@@ -325,6 +334,8 @@ export type ChannelMessageDeferredDeliveryAdmissionContext<TConfig = OpenClawCon
   to: string;
   accountId?: string | null;
   phase: "live" | "recovery";
+  /** Whether this delivery must be provably reconciled after an unknown send result. */
+  requireUnknownSendReconciliation?: boolean;
 };
 
 /** Optional hooks around adapter send attempts, platform success/failure, and commit. */

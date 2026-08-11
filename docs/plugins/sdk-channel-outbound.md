@@ -248,14 +248,24 @@ cannot safely accept core-managed outbound or deferred delivery. Core calls
 this hook synchronously before live outbound work, including paths that skip
 queue persistence, and again before replaying a recovered intent. The context
 includes `cfg`, `channel`, `to`, `accountId`, and a `phase` of `live` or
-`recovery`.
+`recovery`. When the caller requires exact unknown-send reconciliation, the
+context also includes `requireUnknownSendReconciliation: true`.
 
-Return `{ status: "allowed" }` to continue. Return
+Return `{ status: "allowed" }` to continue. For an automatically reconciling
+adapter, an allowed result may set `automaticUnknownSendReconciliation` to
+confirm or suppress the static opt-in for this specific delivery. This
+per-delivery result cannot weaken an explicit
+`requireUnknownSendReconciliation: true` requirement. Return
+`{ status: "deferred", reason }` when provider readiness is not yet
+authoritative. Live work fails before persistence or provider I/O; recovered
+work remains pending for a later retry without consuming an attempt. Return
 `{ status: "permanent_rejection", reason }` when the delivery must not be
 persisted, sent directly, or replayed. A live rejection fails before queue
 creation, message hooks, or platform work. A recovery rejection marks the
-queued record failed and skips reconciliation and replay. Omitting the hook
-means allowed.
+queued record failed and skips replay. For an ambiguous recovered send, core
+performs authoritative unknown-send reconciliation before this replay-only
+admission check, so a cold process-local capability cache cannot hide an
+already-sent provider result. Omitting the hook means allowed.
 
 The hook is a synchronous admission decision, not a send path. Read only
 already-loaded config or runtime state; do not perform network, filesystem, or
