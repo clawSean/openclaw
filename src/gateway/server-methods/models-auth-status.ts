@@ -47,7 +47,11 @@ import {
 } from "../../agents/provider-auth-aliases.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { coerceSecretRef, hasConfiguredSecretInput } from "../../config/types.secrets.js";
-import { providerUsageLabel, resolveUsageProviderId } from "../../infra/provider-usage.shared.js";
+import {
+  isProviderUsageProfileEligible,
+  providerUsageLabel,
+  resolveUsageProviderId,
+} from "../../infra/provider-usage.shared.js";
 import type { UsageProviderId } from "../../infra/provider-usage.types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { refreshActiveProviderAuthRuntimeSnapshot } from "../../secrets/runtime.js";
@@ -85,7 +89,6 @@ export type {
 } from "./models-auth-status.types.js";
 
 const log = createSubsystemLogger("models-auth-status");
-const apiKeyUsageStatusProviders = new Set<UsageProviderId>(["clawrouter", "deepseek"]);
 
 type PreparedAuthMetadataLookupParams = ProviderAuthAliasLookupParams & {
   metadataSnapshot: NonNullable<
@@ -676,15 +679,12 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
       const usageProviderIds = [
         ...new Set(
           authHealth.profiles
-            .filter((p) => {
-              if (p.type === "oauth" || p.type === "token") {
-                return true;
-              }
-              const usageProvider = resolveUsageProviderId(p.provider, {
+            .filter((p) =>
+              isProviderUsageProfileEligible({
+                provider: p.provider,
                 credentialType: p.type,
-              });
-              return usageProvider ? apiKeyUsageStatusProviders.has(usageProvider) : false;
-            })
+              }),
+            )
             .map((p) => resolveUsageProviderId(p.provider, { credentialType: p.type }))
             .filter((id): id is UsageProviderId => Boolean(id)),
         ),

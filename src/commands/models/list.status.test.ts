@@ -284,6 +284,12 @@ vi.mock("./load-config.js", () => ({
 }));
 vi.mock("../../infra/provider-usage.js", () => ({
   formatUsageWindowSummary: vi.fn().mockReturnValue("-"),
+  isProviderUsageProfileEligible: vi.fn(
+    ({ provider, credentialType }: { provider: string; credentialType: string }) =>
+      credentialType === "oauth" ||
+      credentialType === "token" ||
+      (credentialType === "api_key" && ["clawrouter", "deepseek"].includes(provider)),
+  ),
   loadProviderUsageSummary: mocks.loadProviderUsageSummary,
   resolveUsageProviderId: vi.fn((providerId: string) => providerId),
 }));
@@ -551,6 +557,53 @@ async function withOpenAIStatusFixture<T>(
 }
 
 describe("modelsStatusCommand auth overview", () => {
+  it("polls allowlisted API-key profiles without broadening other API-key traffic", async () => {
+    const originalProfiles = { ...mocks.store.profiles };
+    mocks.store.profiles = {
+      "openai:default": {
+        type: "oauth",
+        provider: "openai",
+        access: "oauth-access",
+        refresh: "oauth-refresh",
+        expires: Date.now() + 60_000,
+      },
+      "deepseek:work": {
+        type: "api_key",
+        provider: "deepseek",
+        key: "deepseek-profile-key", // pragma: allowlist secret
+      },
+      "anthropic:api": {
+        type: "api_key",
+        provider: "anthropic",
+        key: "anthropic-profile-key", // pragma: allowlist secret
+      },
+    };
+    mocks.loadProviderUsageSummary.mockReset().mockResolvedValue({
+      updatedAt: 0,
+      providers: [],
+      profiles: [],
+    });
+
+    try {
+      const textRuntime = createRuntime();
+      await modelsStatusCommand({}, textRuntime as never);
+
+      expect(mocks.loadProviderUsageSummary).toHaveBeenCalledWith({
+        providers: ["openai", "deepseek"],
+        agentDir: "/tmp/openclaw-agent",
+        timeoutMs: 3500,
+      });
+      const output = (textRuntime.log as Mock).mock.calls
+        .map((call: unknown[]) => String(call[0]))
+        .join("\n");
+      expect(output).toContain("Usage-capable auth profiles");
+      expect(output).toContain("deepseek:work");
+    } finally {
+      mocks.store.profiles = originalProfiles;
+      mocks.loadProviderUsageSummary.mockReset().mockResolvedValue(undefined);
+    }
+  });
+
   it("shows cooldown reasons and recovery guidance in JSON and text output", async () => {
     const now = Date.now();
     const store = mocks.store as typeof mocks.store & {

@@ -8,6 +8,9 @@ const store = {
     "openai:work": { type: "oauth", provider: "openai" },
     "openai:excluded": { type: "oauth", provider: "openai" },
     "claude-cli:default": { type: "oauth", provider: "claude-cli" },
+    "anthropic:api": { type: "api_key", provider: "anthropic" },
+    "deepseek:work": { type: "api_key", provider: "deepseek" },
+    "openrouter:work": { type: "api_key", provider: "openrouter" },
   },
 };
 
@@ -19,7 +22,13 @@ vi.mock("../agents/auth-profiles.js", () => ({
       ? ["openai:personal", "openai:work"]
       : provider === "claude-cli"
         ? ["claude-cli:default"]
-        : [],
+        : provider === "anthropic"
+          ? ["anthropic:api"]
+          : provider === "deepseek"
+            ? ["deepseek:work"]
+            : provider === "openrouter"
+              ? ["openrouter:work"]
+              : [],
 }));
 
 vi.mock("./provider-usage.auth.js", () => ({
@@ -88,5 +97,24 @@ describe("provider usage profile discovery", () => {
         authProfileId: "claude-cli:default",
       }),
     ]);
+  });
+
+  it("loads API-key profiles only for explicitly allowlisted providers", async () => {
+    const result = await loadProviderUsageSummary({
+      providers: ["anthropic", "deepseek", "openrouter"],
+      config: {},
+      fetch: vi.fn(),
+    });
+
+    expect(readProviderUsageProfileMock.mock.calls.map(([request]) => request)).toEqual([
+      expect.objectContaining({ providerId: "anthropic", authProfileId: "claude-cli:default" }),
+      expect.objectContaining({ providerId: "deepseek", authProfileId: "deepseek:work" }),
+    ]);
+    expect(result.profiles).toEqual(
+      [
+        { provider: "anthropic", authProfileId: "claude-cli:default" },
+        { provider: "deepseek", authProfileId: "deepseek:work" },
+      ].map((profile) => expect.objectContaining(profile)),
+    );
   });
 });

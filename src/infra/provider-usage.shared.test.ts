@@ -1,7 +1,12 @@
 import { MAX_TIMER_TIMEOUT_MS } from "@openclaw/normalization-core/number-coercion";
 // Covers shared provider usage helpers.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clampPercent, raceUsageTimeout, resolveUsageProviderId } from "./provider-usage.shared.js";
+import {
+  clampPercent,
+  isProviderUsageProfileEligible,
+  raceUsageTimeout,
+  resolveUsageProviderId,
+} from "./provider-usage.shared.js";
 
 describe("provider-usage.shared", () => {
   afterEach(() => {
@@ -33,6 +38,21 @@ describe("provider-usage.shared", () => {
     expect(resolveUsageProviderId("openai", { credentialType: "token" })).toBe("openai");
     expect(resolveUsageProviderId("openai", { credentialType: "api_key" })).toBeUndefined();
   });
+
+  it.each([
+    { provider: "anthropic", credentialType: "oauth", expected: true },
+    { provider: "openai", credentialType: "token", expected: true },
+    { provider: "clawrouter", credentialType: "api_key", expected: true },
+    { provider: "deepseek", credentialType: "api_key", expected: true },
+    { provider: "anthropic", credentialType: "api_key", expected: false },
+    { provider: "openrouter", credentialType: "api_key", expected: false },
+    { provider: "deepseek", credentialType: "unknown", expected: false },
+  ])(
+    "applies the explicit profile usage policy to $provider $credentialType",
+    ({ provider, credentialType, expected }) => {
+      expect(isProviderUsageProfileEligible({ provider, credentialType })).toBe(expected);
+    },
+  );
 
   it.each([
     { value: -5, expected: 0 },

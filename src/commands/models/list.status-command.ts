@@ -1247,10 +1247,6 @@ export async function modelsStatusCommand(
         return `${entry.provider} (${count})`;
       });
 
-    const oauthProfiles = authHealth.profiles.filter(
-      (profile) => profile.type === "oauth" || profile.type === "token",
-    );
-
     const unusableProfiles = (() => {
       const now = Date.now();
       const out: Array<{
@@ -1647,18 +1643,29 @@ export async function modelsStatusCommand(
       }
     }
 
+    const {
+      formatUsageWindowSummary,
+      isProviderUsageProfileEligible,
+      loadProviderUsageSummary,
+      resolveUsageProviderId,
+    } = await loadProviderUsageRuntime();
+    const usageProfiles = authHealth.profiles.filter((profile) =>
+      isProviderUsageProfileEligible({
+        provider: profile.provider,
+        credentialType: profile.type,
+      }),
+    );
+
     runtime.log("");
-    runtime.log(colorize(rich, theme.heading, "OAuth/token status"));
-    if (oauthProfiles.length === 0) {
+    runtime.log(colorize(rich, theme.heading, "Usage-capable auth profiles"));
+    if (usageProfiles.length === 0) {
       runtime.log(colorize(rich, theme.muted, "- none"));
     } else {
-      const { formatUsageWindowSummary, loadProviderUsageSummary, resolveUsageProviderId } =
-        await loadProviderUsageRuntime();
       const usageByProvider = new Map<string, string>();
       const usageByProfile = new Map<string, string>();
       const usageProviders = Array.from(
         new Set(
-          oauthProfiles
+          usageProfiles
             .map((profile) =>
               resolveUsageProviderId(profile.provider, { credentialType: profile.type }),
             )
@@ -1713,8 +1720,8 @@ export async function modelsStatusCommand(
         return colorize(rich, theme.error, "expired");
       };
 
-      const profilesByProvider = new Map<string, typeof oauthProfiles>();
-      for (const profile of oauthProfiles) {
+      const profilesByProvider = new Map<string, typeof usageProfiles>();
+      for (const profile of usageProfiles) {
         const current = profilesByProvider.get(profile.provider);
         if (current) {
           current.push(profile);
@@ -1724,9 +1731,9 @@ export async function modelsStatusCommand(
       }
 
       for (const [provider, profiles] of profilesByProvider) {
-        const usageProfile = profiles.find(
-          (profile) => profile.type === "oauth" || profile.type === "token",
-        );
+        const usageProfile =
+          profiles.find((profile) => profile.type === "oauth" || profile.type === "token") ??
+          profiles[0];
         const usageKey = resolveUsageProviderId(provider, {
           credentialType: usageProfile?.type,
         });

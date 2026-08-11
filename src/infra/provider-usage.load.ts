@@ -22,6 +22,7 @@ import type {
 import {
   PROVIDER_USAGE_TIMEOUT_MS,
   ignoredErrors,
+  isProviderUsageProfileEligible,
   providerUsageLabel,
   raceUsageTimeout,
   resolveProviderUsageDisplayName,
@@ -89,7 +90,13 @@ function resolveUsageProfileRefs(params: {
     );
     for (const authProfileId of profileIds) {
       const credential = store.profiles[authProfileId];
-      if (!credential) {
+      if (
+        !credential ||
+        !isProviderUsageProfileEligible({
+          provider: credential.provider,
+          credentialType: credential.type,
+        })
+      ) {
         continue;
       }
       const provider = resolveUsageProviderId(credential.provider, {
