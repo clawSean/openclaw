@@ -27,6 +27,10 @@ export function providerUsageLabel(provider: string): string | undefined {
   return labels[provider];
 }
 
+export function resolveProviderUsageDisplayName(provider: string): string {
+  return providerUsageLabel(provider) ?? provider;
+}
+
 /** Returns true for providers whose usage endpoint is only meaningful with OAuth/token auth. */
 export function isOAuthOnlyUsageProvider(provider: UsageProviderId): boolean {
   return provider === "openai";

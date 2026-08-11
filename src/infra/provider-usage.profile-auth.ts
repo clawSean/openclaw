@@ -2,7 +2,7 @@ import {
   ensureAuthProfileStoreWithoutExternalProfiles,
   resolveApiKeyForProfile,
 } from "../agents/auth-profiles.js";
-import { hasUsableOAuthCredential } from "../agents/auth-profiles/oauth-shared.js";
+import { hasUsableOAuthCredential } from "../agents/auth-profiles/credential-state.js";
 import { normalizeProviderId } from "../agents/model-selection.js";
 import { getRuntimeConfig, type OpenClawConfig } from "../config/config.js";
 import { resolveUsageProviderId } from "./provider-usage.shared.js";

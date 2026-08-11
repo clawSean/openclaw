@@ -13,10 +13,10 @@ import type {
   ProviderUsageProfileSnapshot,
 } from "./provider-usage.profile.types.js";
 import {
-  DEFAULT_TIMEOUT_MS,
+  PROVIDER_USAGE_TIMEOUT_MS,
+  raceUsageTimeout,
   resolveProviderUsageDisplayName,
   resolveUsageProviderId,
-  withTimeout,
 } from "./provider-usage.shared.js";
 import type {
   ProviderUsageBilling,
@@ -36,7 +36,7 @@ type ProviderUsageProfileReadOptions = {
 };
 
 function normalizeReadTimeout(timeoutMs: number | undefined): number {
-  const value = timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const value = timeoutMs ?? PROVIDER_USAGE_TIMEOUT_MS;
   if (!Number.isInteger(value) || value <= 0 || value > MAX_PROFILE_USAGE_TIMEOUT_MS) {
     throw new TypeError(
       `provider usage timeoutMs must be an integer between 1 and ${MAX_PROFILE_USAGE_TIMEOUT_MS}`,
@@ -222,7 +222,7 @@ export async function readProviderUsageProfile(
       const normalized = normalizeProviderId(providerId);
       return (resolveUsageProviderId(normalized) ?? normalized) === provider;
     });
-  const snapshot = await withTimeout(
+  const snapshot = await raceUsageTimeout(
     (async () => {
       const providerAuth = await resolveProviderUsageAuthWithPlugin({
         provider,
