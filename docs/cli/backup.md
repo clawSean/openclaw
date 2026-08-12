@@ -210,7 +210,7 @@ For a same-machine restore, the manifest `sourcePath` values are usually the int
 
 For a full local restore, the usual targets are the state directory, active config file, credentials directory, and any workspace directories listed in the manifest. Do not restore onto a running service.
 
-Installed plugin source and manifest files are restored from the state directory's `extensions/` tree, but nested `node_modules/` dependency trees are not included in backups. If a restored plugin reports missing dependencies, run `openclaw plugins update <id>` or reinstall it with `openclaw plugins install <spec> --force`.
+Before a full restore, review [What gets backed up](#what-gets-backed-up): archives intentionally omit volatile files, plugin dependency trees, and installer-managed runtime roots such as state-local `tmp/`. Recreate those artifacts after restore.
 
 ## Size and performance
 
