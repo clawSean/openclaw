@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { markReplyPayloadAsOwnedTtsToolMedia } from "../../../auto-reply/reply-payload.js";
 import { completeEmbeddedAttemptResult, createMcpAttemptCarryover } from "./attempt-result.js";
 import { buildTraceToolSummary, normalizeEmbeddedRunAttemptResult } from "./run-attempt-result.js";
 
@@ -11,7 +12,11 @@ function completeResult(params?: {
     params?: Record<string, unknown>;
     completed: boolean;
   }>;
-  pendingToolMediaReply?: { mediaUrls?: string[]; audioAsVoice?: boolean };
+  pendingToolMediaReply?: {
+    mediaUrls?: string[];
+    audioAsVoice?: boolean;
+    trustedLocalMedia?: boolean;
+  };
   toolMetas?: Array<{
     toolName: string;
     meta?: string;
@@ -201,6 +206,21 @@ describe("attempt result projection", () => {
     expect(completeResult({ pendingToolMediaReply: { audioAsVoice: true } }).toolAudioAsVoice).toBe(
       true,
     );
+    const ownedTtsReply = markReplyPayloadAsOwnedTtsToolMedia({
+      mediaUrls: ["/tmp/reply.opus"],
+      audioAsVoice: true,
+      trustedLocalMedia: true,
+    });
+    expect(completeResult({ pendingToolMediaReply: ownedTtsReply }).toolOwnedTtsMedia).toBe(true);
+    expect(
+      completeResult({
+        pendingToolMediaReply: {
+          mediaUrls: ["/tmp/reply.opus"],
+          audioAsVoice: true,
+          trustedLocalMedia: true,
+        },
+      }).toolOwnedTtsMedia,
+    ).toBeUndefined();
   });
 
   it("projects the latest MCP App channel view without result data", () => {

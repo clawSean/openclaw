@@ -3,6 +3,7 @@
  */
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
+import { markReplyPayloadAsOwnedTtsToolMedia } from "../auto-reply/reply-payload.js";
 import type { ReplyDirectiveParseResult } from "../auto-reply/reply/reply-directives.js";
 import type { BlockReplyPayload } from "./embedded-agent-payloads.js";
 import type { EmbeddedAgentSubscribeState } from "./embedded-agent-subscribe.handlers.types.js";
@@ -54,12 +55,14 @@ function clearPendingToolMedia(
     | "pendingToolMediaUrls"
     | "pendingToolMediaAttachments"
     | "pendingToolMediaTrustByUrl"
+    | "pendingToolMediaOwnedTtsByUrl"
     | "pendingToolAudioAsVoice"
   >,
 ) {
   state.pendingToolMediaUrls = [];
   state.pendingToolMediaAttachments = [];
   state.pendingToolMediaTrustByUrl.clear();
+  state.pendingToolMediaOwnedTtsByUrl.clear();
   state.pendingToolAudioAsVoice = false;
 }
 
@@ -104,6 +107,7 @@ export function consumePendingToolMediaIntoReply(
     | "pendingToolMediaUrls"
     | "pendingToolMediaAttachments"
     | "pendingToolMediaTrustByUrl"
+    | "pendingToolMediaOwnedTtsByUrl"
     | "pendingToolAudioAsVoice"
   >,
   payload: BlockReplyPayload,
@@ -142,13 +146,23 @@ export function consumePendingToolMediaIntoReply(
       )
         ? { ...payloadWithMetadata, trustedLocalMedia: true }
         : payloadWithMetadata;
+    const allSelectedMediaOwnedByTts =
+      allSelectedMediaIsPending &&
+      (payload.mediaUrls ?? []).every(
+        (url) => state.pendingToolMediaOwnedTtsByUrl.get(url.trim()) === true,
+      );
     clearPendingToolMedia(state);
-    return selectedPayload;
+    return allSelectedMediaOwnedByTts
+      ? markReplyPayloadAsOwnedTtsToolMedia(selectedPayload)
+      : selectedPayload;
   }
   const pendingMedia = readAlignedPendingToolMedia(state);
   const allPendingMediaTrusted =
     pendingMedia.mediaUrls.length > 0 &&
     pendingMedia.mediaUrls.every((url) => state.pendingToolMediaTrustByUrl.get(url) === true);
+  const allPendingMediaOwnedByTts =
+    pendingMedia.mediaUrls.length > 0 &&
+    pendingMedia.mediaUrls.every((url) => state.pendingToolMediaOwnedTtsByUrl.get(url) === true);
   const mergedPayload: BlockReplyPayload = {
     ...payload,
     mediaUrls: pendingMedia.mediaUrls.length ? pendingMedia.mediaUrls : undefined,
@@ -157,7 +171,9 @@ export function consumePendingToolMediaIntoReply(
     ...(payload.trustedLocalMedia || allPendingMediaTrusted ? { trustedLocalMedia: true } : {}),
   };
   clearPendingToolMedia(state);
-  return mergedPayload;
+  return allPendingMediaOwnedByTts
+    ? markReplyPayloadAsOwnedTtsToolMedia(mergedPayload)
+    : mergedPayload;
 }
 
 /** Consumes queued tool media as a standalone reply payload. */
@@ -167,6 +183,7 @@ export function consumePendingToolMediaReply(
     | "pendingToolMediaUrls"
     | "pendingToolMediaAttachments"
     | "pendingToolMediaTrustByUrl"
+    | "pendingToolMediaOwnedTtsByUrl"
     | "pendingToolAudioAsVoice"
   >,
 ): BlockReplyPayload | null {
@@ -185,6 +202,7 @@ export function readPendingToolMediaReply(
     | "pendingToolMediaUrls"
     | "pendingToolMediaAttachments"
     | "pendingToolMediaTrustByUrl"
+    | "pendingToolMediaOwnedTtsByUrl"
     | "pendingToolAudioAsVoice"
   >,
 ): BlockReplyPayload | null {
@@ -195,12 +213,16 @@ export function readPendingToolMediaReply(
   const allPendingMediaTrusted =
     pendingMedia.mediaUrls.length > 0 &&
     pendingMedia.mediaUrls.every((url) => state.pendingToolMediaTrustByUrl.get(url) === true);
-  return {
+  const allPendingMediaOwnedByTts =
+    pendingMedia.mediaUrls.length > 0 &&
+    pendingMedia.mediaUrls.every((url) => state.pendingToolMediaOwnedTtsByUrl.get(url) === true);
+  const payload: BlockReplyPayload = {
     mediaUrls: pendingMedia.mediaUrls.length ? pendingMedia.mediaUrls : undefined,
     attachments: pendingMedia.attachments,
     audioAsVoice: state.pendingToolAudioAsVoice || undefined,
     ...(allPendingMediaTrusted ? { trustedLocalMedia: true } : {}),
   };
+  return allPendingMediaOwnedByTts ? markReplyPayloadAsOwnedTtsToolMedia(payload) : payload;
 }
 
 export function recordPendingAssistantReplyDirectives(

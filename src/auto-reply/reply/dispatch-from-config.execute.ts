@@ -28,6 +28,7 @@ import {
 } from "./dispatch-from-config.payloads.js";
 import { extendPreparedDispatchState } from "./dispatch-from-config.phase-state.js";
 import type { PrepareDispatchExecutionReadyState } from "./dispatch-from-config.prepare-execution.js";
+import { deliverSuppressedTrustedTtsBlock } from "./dispatch-from-config.trusted-tts.js";
 import { bindPreparedReplyDispatchRuntime } from "./prepared-reply-dispatch-context.js";
 import { waitForReplyDispatcherIdle } from "./reply-dispatcher.js";
 import { REPLY_OPERATION_RUN_STATE } from "./reply-operation-run-state.js";
@@ -228,7 +229,6 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                     const forceToolResultProgress =
                       params.replyOptions?.forceToolResultProgress === true;
                     const durableToolResult = requiresDurableToolResultDelivery(payload);
-                    const requiresDurableToolResult = forceToolResultProgress && durableToolResult;
                     if (params.replyOptions?.suppressToolProgressMessages && !durableToolResult) {
                       return;
                     }
@@ -237,7 +237,7 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                           forwardWhenSourceDeliverySuppressed: true,
                         })
                       : forceToolResultProgress
-                        ? !requiresDurableToolResult &&
+                        ? !durableToolResult &&
                           !state.shouldEmitVerboseProgress() &&
                           shouldForwardProgressCallback({
                             forwardWhenSourceDeliverySuppressed: true,
@@ -433,13 +433,12 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                     if (isDispatchOperationAborted()) {
                       return;
                     }
-                    // Buffered commentary preceded this block; deliver it first.
                     await flushPendingCommentaryProgress();
                     if (
                       state.suppressDelivery &&
                       !shouldDeliverDespiteSourceReplySuppression(inputPayload, state)
                     ) {
-                      return;
+                      return deliverSuppressedTrustedTtsBlock(state, inputPayload, context);
                     }
                     // Durable reasoning is a channel-owned lane; generic channels
                     // keep the historical suppression unless they explicitly opt in.

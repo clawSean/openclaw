@@ -1,6 +1,7 @@
 /**
  * Projects stream state into the stable embedded-attempt result contract.
  */
+import { isReplyPayloadOwnedTtsToolMedia } from "../../../auto-reply/reply-payload.js";
 import { freezeDiagnosticTraceContext } from "../../../infra/diagnostic-trace-context.js";
 import type { DiagnosticTraceContext } from "../../../infra/diagnostic-trace-context.js";
 import {
@@ -421,6 +422,10 @@ export function completeEmbeddedAttemptResult(
     toolMediaUrls: pendingToolMediaReply?.mediaUrls,
     toolAudioAsVoice: pendingToolMediaReply?.audioAsVoice,
     toolTrustedLocalMedia: pendingToolMediaReply?.trustedLocalMedia,
+    toolOwnedTtsMedia:
+      pendingToolMediaReply && isReplyPayloadOwnedTtsToolMedia(pendingToolMediaReply)
+        ? true
+        : undefined,
     hasToolMediaBlockReply: hasToolMediaBlockReplyNow,
     successfulCronAdds: getSuccessfulCronAdds(),
     cloudCodeAssistFormatError: Boolean(

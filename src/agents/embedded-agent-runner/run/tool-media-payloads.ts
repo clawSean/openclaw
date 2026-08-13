@@ -5,6 +5,7 @@ import type { SourceReplyDeliveryMode } from "../../../auto-reply/get-reply-opti
 import {
   copyReplyPayloadMetadata,
   getReplyPayloadMetadata,
+  markReplyPayloadAsOwnedTtsToolMedia,
   markReplyPayloadForSourceSuppressionDelivery,
 } from "../../../auto-reply/reply-payload.js";
 import type { EmbeddedAgentRunResult } from "../types.js";
@@ -23,6 +24,7 @@ export function mergeAttemptToolMediaPayloads(params: {
   hostOwnedToolMediaUrls?: string[];
   toolAudioAsVoice?: boolean;
   toolTrustedLocalMedia?: boolean;
+  toolOwnedTtsMedia?: boolean;
   sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
 }): EmbeddedRunPayload[] | undefined {
   // Trim and dedupe tool media before merging with assistant-owned payload media.
@@ -78,8 +80,14 @@ export function mergeAttemptToolMediaPayloads(params: {
     ) {
       // Message-tool-only source replies are transcript mirrors of a send that
       // already happened elsewhere; attaching generated media here would create
-      // a duplicate channel delivery.
-      return appendHostOwnedMedia(payloads);
+      // a duplicate channel delivery or leave trusted TTS media on a suppressed
+      // mirror payload. Preserve the newer harness-owned provenance split, then
+      // emit only media proven to come from the owned dynamic TTS tool.
+      const ownedTtsMediaPayloads =
+        params.toolOwnedTtsMedia && params.toolTrustedLocalMedia && mergeableMediaUrls.length > 0
+          ? [markReplyPayloadAsOwnedTtsToolMedia(buildMediaPayload(mergeableMediaUrls, true))]
+          : [];
+      return appendHostOwnedMedia([...payloads, ...ownedTtsMediaPayloads]);
     }
     if (mergeableMediaUrls.length === 0 && shouldSplitHostOwnedMedia) {
       return appendHostOwnedMedia(payloads);
@@ -87,24 +95,45 @@ export function mergeAttemptToolMediaPayloads(params: {
     const mergedMediaUrls = Array.from(
       new Set([...(payload.mediaUrls ?? []), ...mergeableMediaUrls]),
     );
-    payloads[payloadIndex] = copyReplyPayloadMetadata(payload, {
+    const mergedPayload = copyReplyPayloadMetadata(payload, {
       ...payload,
       mediaUrls: mergedMediaUrls.length ? mergedMediaUrls : undefined,
       mediaUrl: payload.mediaUrl ?? mergedMediaUrls[0],
       audioAsVoice: payload.audioAsVoice || params.toolAudioAsVoice || undefined,
       trustedLocalMedia: payload.trustedLocalMedia || params.toolTrustedLocalMedia || undefined,
     });
+    const payloadAlreadyHadMedia = Boolean(
+      payload.mediaUrl?.trim() || payload.mediaUrls?.some((url) => url.trim()),
+    );
+    payloads[payloadIndex] =
+      params.toolOwnedTtsMedia &&
+      params.toolTrustedLocalMedia &&
+      !payloadAlreadyHadMedia &&
+      mergeableMediaUrls.length > 0
+        ? markReplyPayloadAsOwnedTtsToolMedia(mergedPayload)
+        : mergedPayload;
     return appendHostOwnedMedia(payloads);
   }
 
   if (shouldSplitHostOwnedMedia) {
     const genericMediaPayload =
-      mergeableMediaUrls.length > 0 ? [buildMediaPayload(mergeableMediaUrls, true)] : [];
+      mergeableMediaUrls.length > 0
+        ? [
+            params.toolOwnedTtsMedia && params.toolTrustedLocalMedia
+              ? markReplyPayloadAsOwnedTtsToolMedia(buildMediaPayload(mergeableMediaUrls, true))
+              : buildMediaPayload(mergeableMediaUrls, true),
+          ]
+        : [];
     return appendHostOwnedMedia([...payloads, ...genericMediaPayload]);
   }
 
   const mediaPayload = buildMediaPayload(mergeableMediaUrls, true);
 
   // Reasoning-only turns still need a concrete media payload so channel delivery sees the attachment.
-  return [...payloads, mediaPayload];
+  return [
+    ...payloads,
+    params.toolOwnedTtsMedia && params.toolTrustedLocalMedia
+      ? markReplyPayloadAsOwnedTtsToolMedia(mediaPayload)
+      : mediaPayload,
+  ];
 }

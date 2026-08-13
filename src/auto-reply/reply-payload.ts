@@ -296,6 +296,12 @@ export type ReplyPayloadMetadata = {
   beforeAgentRunBlocked?: boolean;
   /** Warning synthesized from an observed tool error after the run produced assistant output. */
   nonTerminalToolErrorWarning?: boolean;
+  /**
+   * Every outbound media reference on this payload came from the owned dynamic
+   * `tts` tool. Source-suppressed delivery strips all non-media fields before
+   * using this fact.
+   */
+  ownedTtsToolMedia?: boolean;
   /** Unresolved mutating tool failure that makes a heartbeat run terminally failed. */
   heartbeatTerminalToolFailure?: {
     toolName: string;
@@ -335,6 +341,16 @@ export function markReplyPayloadForSourceSuppressionDelivery<T extends object>(p
   return setReplyPayloadMetadata(payload, {
     deliverDespiteSourceReplySuppression: true,
   });
+}
+
+/** Marks a payload whose outbound media is exclusively owned dynamic `tts` output. */
+export function markReplyPayloadAsOwnedTtsToolMedia<T extends object>(payload: T): T {
+  return setReplyPayloadMetadata(payload, { ownedTtsToolMedia: true });
+}
+
+/** Returns true only for media isolated from an owned dynamic `tts` tool result. */
+export function isReplyPayloadOwnedTtsToolMedia(payload: object): boolean {
+  return getReplyPayloadMetadata(payload)?.ownedTtsToolMedia === true;
 }
 
 export function markCommandReplyForDelivery(

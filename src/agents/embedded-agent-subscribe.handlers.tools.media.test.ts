@@ -1,6 +1,8 @@
 // Tool media handler tests cover media extraction from tool results, trusted
 // local media flags, and quiet/verbose tool-output emission paths.
 import { describe, expect, it, vi } from "vitest";
+import { isReplyPayloadOwnedTtsToolMedia } from "../auto-reply/reply-payload.js";
+import { readPendingToolMediaReply } from "./embedded-agent-subscribe.handlers.messages.replies.js";
 import {
   handleToolExecutionEnd,
   handleToolExecutionStart,
@@ -38,6 +40,7 @@ function createMockContext(overrides?: {
       pendingMessagingMediaUrls: new Map(),
       pendingToolMediaUrls: [],
       pendingToolMediaTrustByUrl: new Map(),
+      pendingToolMediaOwnedTtsByUrl: new Map(),
       pendingToolAudioAsVoice: false,
       messagingToolSentTexts: [],
       messagingToolSentTextsNormalized: [],
@@ -682,6 +685,8 @@ describe("handleToolExecutionEnd media emission", () => {
     expect(ctx.state.pendingToolMediaUrls).toEqual(["/tmp/reply.opus"]);
     expect(ctx.state.pendingToolAudioAsVoice).toBe(true);
     expect(ctx.state.pendingToolMediaTrustByUrl.get("/tmp/reply.opus")).toBe(true);
+    expect(ctx.state.pendingToolMediaOwnedTtsByUrl.get("/tmp/reply.opus")).toBe(true);
+    expect(isReplyPayloadOwnedTtsToolMedia(readPendingToolMediaReply(ctx.state) ?? {})).toBe(true);
   });
 
   it("queues trusted TTS local media when the exact built-in name is absent", async () => {
@@ -711,5 +716,34 @@ describe("handleToolExecutionEnd media emission", () => {
     expect(ctx.state.pendingToolMediaUrls).toEqual(["/tmp/reply.opus"]);
     expect(ctx.state.pendingToolAudioAsVoice).toBe(true);
     expect(ctx.state.pendingToolMediaTrustByUrl.get("/tmp/reply.opus")).toBe(true);
+    expect(ctx.state.pendingToolMediaOwnedTtsByUrl.get("/tmp/reply.opus")).toBe(true);
+    expect(isReplyPayloadOwnedTtsToolMedia(readPendingToolMediaReply(ctx.state) ?? {})).toBe(true);
+  });
+
+  it("fails closed when another tool reuses an owned TTS media reference", async () => {
+    const ctx = createMockContext({ shouldEmitToolOutput: false, onToolResult: vi.fn() });
+    const media = {
+      mediaUrl: "/tmp/reply.opus",
+      audioAsVoice: true,
+      trustedLocalMedia: true,
+    };
+
+    await handleToolExecutionEnd(ctx, {
+      type: "tool_execution_end",
+      toolName: "tts",
+      toolCallId: "tts-1",
+      isError: false,
+      result: { details: { media } },
+    });
+    await handleToolExecutionEnd(ctx, {
+      type: "tool_execution_end",
+      toolName: "canvas",
+      toolCallId: "canvas-1",
+      isError: false,
+      result: { details: { media } },
+    });
+
+    expect(ctx.state.pendingToolMediaOwnedTtsByUrl.get("/tmp/reply.opus")).toBe(false);
+    expect(isReplyPayloadOwnedTtsToolMedia(readPendingToolMediaReply(ctx.state) ?? {})).toBe(false);
   });
 });

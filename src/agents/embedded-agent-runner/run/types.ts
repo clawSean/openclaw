@@ -307,6 +307,8 @@ export type EmbeddedRunAttemptResult = {
   hostOwnedToolMediaUrls?: string[];
   toolAudioAsVoice?: boolean;
   toolTrustedLocalMedia?: boolean;
+  /** Every toolMediaUrl came from an owned, trusted dynamic `tts` result. */
+  toolOwnedTtsMedia?: boolean;
   hasToolMediaBlockReply?: boolean;
   successfulCronAdds?: number;
   cloudCodeAssistFormatError: boolean;

@@ -7,6 +7,7 @@ import { resolveConfiguredTtsMode } from "../../tts/tts-config.js";
 import { registerReplyDispatcherSettledTask } from "../dispatch-dispatcher.js";
 import {
   getReplyPayloadMetadata,
+  isReplyPayloadOwnedTtsToolMedia,
   isReplyPayloadStatusNotice,
   markReplyPayloadAsTtsSupplement,
   type ReplyPayload,
@@ -19,6 +20,7 @@ import {
   NO_VISIBLE_REPLY_FALLBACK_TEXT,
   QUEUE_CAP_REJECTION_TEXT,
   shouldDeliverDespiteSourceReplySuppression,
+  toTrustedMediaOnlyPayload,
 } from "./dispatch-from-config.payloads.js";
 import {
   clearPendingFinalDeliveryAfterSuccess,
@@ -85,6 +87,31 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
   let channelTransformSuppressedFinal = false;
   const finalDeliveries: Promise<ReplyDispatchDeliveryOutcome>[] = [];
   let allQueuedFinalsObserved = true;
+  // Explicit command turns (native or authorized text-slash like /compact) are
+  // user-initiated, so a marked terminal reply for the command bypasses
+  // room_event suppression as-is. Ambient marked notices (no CommandTurn) stay
+  // suppressed in room_event. Owned dynamic TTS tool media can bypass
+  // message_tool_only suppression only after stripping private text.
+  type SourceReplySuppressionBypass = "none" | "deliver-as-is" | "trusted-media-only";
+  const resolveSourceReplySuppressionBypass = (
+    reply: ReplyPayload,
+  ): SourceReplySuppressionBypass => {
+    if (shouldDeliverDespiteSourceReplySuppression(reply, state)) {
+      return "deliver-as-is";
+    }
+    if (
+      state.suppressAutomaticSourceDelivery &&
+      !sendPolicyDenied &&
+      state.sourceReplyDeliveryMode === "message_tool_only" &&
+      isReplyPayloadOwnedTtsToolMedia(reply) &&
+      reply.trustedLocalMedia === true &&
+      reply.sensitiveMedia !== true &&
+      hasOutboundReplyContent(toTrustedMediaOnlyPayload(reply), { trimText: true })
+    ) {
+      return "trusted-media-only";
+    }
+    return "none";
+  };
   const sentFinalPayloadDedupeKeys = new Set<string>();
   let deferredTtsTextPending = state.progressState.accumulatedBlockTtsText;
   for (const [replyIndex, reply] of replies.entries()) {
@@ -99,7 +126,8 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
       await suppressPendingFinalDelivery(reply);
       continue;
     }
-    if (suppressDelivery && !shouldDeliverDespiteSourceReplySuppression(reply, state)) {
+    const sourceReplySuppressionBypass = resolveSourceReplySuppressionBypass(reply);
+    if (suppressDelivery && sourceReplySuppressionBypass === "none") {
       if (hasOutboundReplyContent(reply, { trimText: true })) {
         logVerbose(
           [
@@ -117,6 +145,10 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
       await suppressPendingFinalDelivery(reply);
       continue;
     }
+    const deliveryReply =
+      sourceReplySuppressionBypass === "trusted-media-only"
+        ? toTrustedMediaOnlyPayload(reply)
+        : reply;
     const finalPayloadDedupeKey = createFinalDispatchPayloadDedupeKey(reply);
     if (sentFinalPayloadDedupeKeys.has(finalPayloadDedupeKey)) {
       await suppressPendingFinalDelivery(reply);
@@ -125,10 +157,11 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
     sentFinalPayloadDedupeKeys.add(finalPayloadDedupeKey);
     const shouldAttachDeferredText =
       deferFinalTtsText &&
+      sourceReplySuppressionBypass !== "trusted-media-only" &&
       reply.isReasoning !== true &&
       reply.isCommentary !== true &&
       !isReplyPayloadStatusNotice(reply);
-    const finalReply = await state.sendFinalPayload(reply, {
+    const finalReply = await state.sendFinalPayload(deliveryReply, {
       deliveryId: String(replyIndex),
       ...(shouldAttachDeferredText
         ? {

@@ -212,6 +212,7 @@ export function prepareEmbeddedRunTerminal(input: {
     hostOwnedToolMediaUrls: attempt.hostOwnedToolMediaUrls,
     toolAudioAsVoice: attempt.toolAudioAsVoice,
     toolTrustedLocalMedia: attempt.toolTrustedLocalMedia,
+    toolOwnedTtsMedia: attempt.toolOwnedTtsMedia,
     sourceReplyDeliveryMode: runParams.sourceReplyDeliveryMode,
   });
   const recoveredFinalAssistantTextAfterPromptTimeout =

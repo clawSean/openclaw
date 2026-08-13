@@ -70,6 +70,7 @@ function createContext(
       pendingCompactionRetry: 0,
       pendingToolMediaUrls: [],
       pendingToolMediaTrustByUrl: new Map(),
+      pendingToolMediaOwnedTtsByUrl: new Map(),
       pendingToolAudioAsVoice: false,
       deferredBlockReplies: [],
       replayState: { replayInvalid: false, hadPotentialSideEffects: false },

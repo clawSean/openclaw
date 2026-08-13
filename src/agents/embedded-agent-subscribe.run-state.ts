@@ -142,6 +142,7 @@ export function createEmbeddedAgentSubscribeState(
     pendingToolMediaUrls: initialPendingToolMedia.mediaUrls,
     pendingToolMediaAttachments: initialPendingToolMedia.attachments,
     pendingToolMediaTrustByUrl: initialPendingToolMedia.trustByUrl,
+    pendingToolMediaOwnedTtsByUrl: new Map(),
     pendingToolAudioAsVoice: false,
     hasToolMediaBlockReply: false,
     visibleBlockReplyCount: 0,

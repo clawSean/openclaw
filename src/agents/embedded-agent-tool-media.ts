@@ -164,7 +164,7 @@ if (process.env.VITEST || process.env.NODE_ENV === "test") {
   ] = { isToolResultMediaTrusted };
 }
 
-function isTrustedOwnedTtsLocalMedia(
+export function isTrustedOwnedTtsLocalMedia(
   toolName: string | undefined,
   result: unknown,
   trustedLocalMediaToolNames?: ReadonlySet<string>,

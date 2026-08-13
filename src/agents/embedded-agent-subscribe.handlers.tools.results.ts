@@ -22,6 +22,7 @@ import type { ToolHandlerContext } from "./embedded-agent-subscribe.handlers.typ
 import {
   extractToolResultMediaArtifact,
   filterToolResultMediaUrls,
+  isTrustedOwnedTtsLocalMedia,
 } from "./embedded-agent-tool-media.js";
 import { extractToolResultText, truncateLiveExecOutput } from "./embedded-agent-tool-results.js";
 import type { ProcessTerminalDiagnostic } from "./tool-error-summary.js";
@@ -448,7 +449,12 @@ export function hasMessagingRichContent(record: Record<string, unknown>): boolea
 
 function queuePendingToolMedia(
   ctx: ToolHandlerContext,
-  mediaReply: { mediaUrls: string[]; audioAsVoice?: boolean; trustedLocalMedia?: boolean },
+  mediaReply: {
+    mediaUrls: string[];
+    audioAsVoice?: boolean;
+    trustedLocalMedia?: boolean;
+    ownedTtsToolMedia?: boolean;
+  },
 ) {
   const seen = new Set(ctx.state.pendingToolMediaUrls.map((url) => url.trim()));
   for (const mediaUrl of mediaReply.mediaUrls) {
@@ -460,6 +466,16 @@ function queuePendingToolMedia(
       ctx.state.pendingToolMediaTrustByUrl.set(normalized, true);
     } else if (!ctx.state.pendingToolMediaTrustByUrl.has(normalized)) {
       ctx.state.pendingToolMediaTrustByUrl.set(normalized, false);
+    }
+    const previousOwnedTts = ctx.state.pendingToolMediaOwnedTtsByUrl.get(normalized);
+    if (previousOwnedTts === undefined) {
+      ctx.state.pendingToolMediaOwnedTtsByUrl.set(
+        normalized,
+        mediaReply.ownedTtsToolMedia === true,
+      );
+    } else if (!mediaReply.ownedTtsToolMedia) {
+      // Fail closed when different tool results collide on one media reference.
+      ctx.state.pendingToolMediaOwnedTtsByUrl.set(normalized, false);
     }
     if (seen.has(normalized)) {
       continue;
@@ -665,6 +681,11 @@ export async function emitToolResultOutput(params: {
         ctx.trustedLocalMediaToolNames,
       )
     : [];
+  const ownedTtsToolMedia = isTrustedOwnedTtsLocalMedia(
+    rawToolName,
+    result,
+    ctx.trustedLocalMediaToolNames,
+  );
   const shouldEmitOutput =
     !shouldSuppressStructuredMediaToolOutput({
       toolName,
@@ -696,5 +717,6 @@ export async function emitToolResultOutput(params: {
     mediaUrls,
     ...(mediaReply.audioAsVoice ? { audioAsVoice: true } : {}),
     ...(mediaReply.trustedLocalMedia ? { trustedLocalMedia: true } : {}),
+    ...(ownedTtsToolMedia ? { ownedTtsToolMedia: true } : {}),
   });
 }

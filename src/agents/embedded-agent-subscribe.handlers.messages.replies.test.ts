@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isReplyPayloadOwnedTtsToolMedia } from "../auto-reply/reply-payload.js";
 import {
   consumePendingToolMediaIntoReply,
   consumePendingToolMediaReply,
@@ -18,6 +19,7 @@ describe("consumePendingToolMediaIntoReply", () => {
         ["/tmp/a.png", true],
         ["/tmp/b.png", false],
       ]),
+      pendingToolMediaOwnedTtsByUrl: new Map(),
       pendingToolAudioAsVoice: false,
     };
 
@@ -48,6 +50,7 @@ describe("consumePendingToolMediaIntoReply", () => {
     const state = {
       pendingToolMediaUrls: ["/tmp/generated.png"],
       pendingToolMediaTrustByUrl: new Map([["/tmp/generated.png", true]]),
+      pendingToolMediaOwnedTtsByUrl: new Map(),
       pendingToolAudioAsVoice: false,
     };
 
@@ -77,6 +80,7 @@ describe("consumePendingToolMediaIntoReply", () => {
         ["/tmp/generated.mp3", true],
         ["/tmp/unselected.mp3", false],
       ]),
+      pendingToolMediaOwnedTtsByUrl: new Map(),
       pendingToolAudioAsVoice: false,
     };
 
@@ -116,6 +120,7 @@ describe("consumePendingToolMediaIntoReply", () => {
         ["/tmp/generated.mp3", true],
         ["/tmp/untrusted.mp3", false],
       ]),
+      pendingToolMediaOwnedTtsByUrl: new Map(),
       pendingToolAudioAsVoice: false,
     };
 
@@ -135,6 +140,7 @@ describe("consumePendingToolMediaIntoReply", () => {
     const state = {
       pendingToolMediaUrls: ["/tmp/reply.opus"],
       pendingToolMediaTrustByUrl: new Map([["/tmp/reply.opus", true]]),
+      pendingToolMediaOwnedTtsByUrl: new Map(),
       pendingToolAudioAsVoice: true,
     };
 
@@ -156,6 +162,7 @@ describe("consumePendingToolMediaIntoReply", () => {
     const state = {
       pendingToolMediaUrls: ["/tmp/a.png"],
       pendingToolMediaTrustByUrl: new Map([["/tmp/a.png", false]]),
+      pendingToolMediaOwnedTtsByUrl: new Map(),
       pendingToolAudioAsVoice: true,
     };
 
@@ -174,10 +181,30 @@ describe("consumePendingToolMediaIntoReply", () => {
 });
 
 describe("consumePendingToolMediaReply", () => {
+  it("marks a reply only when every queued media URL came from the owned TTS tool", () => {
+    const state = {
+      pendingToolMediaUrls: ["/tmp/reply.opus"],
+      pendingToolMediaTrustByUrl: new Map([["/tmp/reply.opus", true]]),
+      pendingToolMediaOwnedTtsByUrl: new Map([["/tmp/reply.opus", true]]),
+      pendingToolAudioAsVoice: true,
+    };
+
+    const reply = readPendingToolMediaReply(state);
+
+    expect(reply).toEqual({
+      mediaUrls: ["/tmp/reply.opus"],
+      attachments: [{ trustedLocalMedia: true }],
+      audioAsVoice: true,
+      trustedLocalMedia: true,
+    });
+    expect(isReplyPayloadOwnedTtsToolMedia(reply ?? {})).toBe(true);
+  });
+
   it("reads a media-only reply without consuming queued tool media", () => {
     const state = {
       pendingToolMediaUrls: ["/tmp/reply.opus"],
       pendingToolMediaTrustByUrl: new Map([["/tmp/reply.opus", false]]),
+      pendingToolMediaOwnedTtsByUrl: new Map(),
       pendingToolAudioAsVoice: true,
     };
 
@@ -193,6 +220,7 @@ describe("consumePendingToolMediaReply", () => {
     const state = {
       pendingToolMediaUrls: ["/tmp/reply.opus"],
       pendingToolMediaTrustByUrl: new Map([["/tmp/reply.opus", false]]),
+      pendingToolMediaOwnedTtsByUrl: new Map(),
       pendingToolAudioAsVoice: true,
     };
 
