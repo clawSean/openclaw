@@ -24,6 +24,7 @@ describe("bundled channel configured-state metadata", () => {
       "nextcloud-talk",
       "nostr",
       "raft",
+      "rcs",
       "slack",
       "sms",
       "synology-chat",

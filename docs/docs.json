@@ -1161,6 +1161,7 @@
                   "channels/discord-activities",
                   "channels/slack",
                   "channels/sms",
+                  "channels/rcs",
                   "channels/telegram",
                   "channels/whatsapp",
                   "channels/signal",

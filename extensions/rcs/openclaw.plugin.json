@@ -1,0 +1,14 @@
+{
+  "id": "rcs",
+  "name": "RCS",
+  "description": "Twilio RCS Business Messaging channel plugin for OpenClaw.",
+  "activation": {
+    "onStartup": false
+  },
+  "channels": ["rcs"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

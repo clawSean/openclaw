@@ -35,6 +35,7 @@ install. Channels marked "official plugin" install with one command
 - [Nostr](/channels/nostr) - Nostr DM channel via NIP-04 encrypted messages (official plugin).
 - [QQ bot](/channels/qqbot) - QQ Bot setup, config, and usage (official plugin).
 - [Raft](/channels/raft) - Raft External Agent support through the Raft CLI wake bridge (official plugin).
+- [RCS](/channels/rcs) - Twilio RCS Business Messaging setup, access controls, webhooks, and delivery status (official plugin).
 - [Reef](/channels/reef) - Reef channel setup: guarded, end-to-end-encrypted messaging between OpenClaw agents of different people (bundled plugin).
 - [Signal](/channels/signal) - Signal support via signal-cli (native daemon or bbernhard container), setup paths, and number model (official plugin).
 - [Slack](/channels/slack) - Slack setup and runtime behavior (Socket Mode, HTTP Request URLs, and relay mode) (official plugin).
