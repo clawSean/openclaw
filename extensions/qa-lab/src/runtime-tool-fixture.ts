@@ -102,7 +102,10 @@ type QaRuntimeToolFixtureDeps = {
     sessionKey: string,
   ) => Promise<Set<string>>;
   runAgentPrompt: (
-    env: Pick<QaSuiteRuntimeEnv, "gateway" | "transport">,
+    env: Pick<
+      QaSuiteRuntimeEnv,
+      "gateway" | "transport" | "providerMode" | "primaryModel" | "alternateModel"
+    >,
     params: {
       sessionKey: string;
       message: string;
