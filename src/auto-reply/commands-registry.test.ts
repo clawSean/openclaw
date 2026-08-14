@@ -262,6 +262,17 @@ describe("commands registry", () => {
     expect(sideNativeSpec.isAlias).toBe(true);
   });
 
+  it("exposes /ignore only as a Telegram native command", () => {
+    expect(requireChatCommand("ignore")).toMatchObject({
+      nativeName: "ignore",
+      nativeProviders: ["telegram"],
+      acceptsArgs: true,
+    });
+    expect(findCommandByNativeName("ignore", "telegram")?.key).toBe("ignore");
+    expect(findCommandByNativeName("ignore", "discord")).toBeUndefined();
+    expect(resolveTextCommand("/ignore ordinary text")).toBeNull();
+  });
+
   it("matches text command names case-insensitively without changing args", () => {
     expect(normalizeCommandBody("/STATUS")).toBe("/status");
     expect(normalizeCommandBody("/Model OpenAI-Codex/GPT-5.5")).toBe("/model OpenAI-Codex/GPT-5.5");

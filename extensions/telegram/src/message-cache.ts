@@ -17,6 +17,7 @@ import {
   normalizeForwardedContext,
   type TelegramThreadSpec,
 } from "./bot/helpers.js";
+import { isTelegramIgnoredMessage } from "./ignore-command.js";
 import {
   isTelegramMessageCacheSourceMessage,
   parseTelegramResolvedMedia,
@@ -59,6 +60,7 @@ type TelegramMessageCache = {
     chatId: string | number;
     msg: Message;
     botUserId?: number;
+    botUsername?: string;
     promptContextProjection?: TelegramPromptContextProjection;
     /** Set only while recording an authenticated provider event or response. */
     providerObservedThread?: TelegramThreadSpec;
@@ -169,6 +171,25 @@ function resolveReplyMessage(msg: Message): Message | undefined {
 
 function resolveEmbeddedReplyMessage(msg: Message): Message | undefined {
   return msg.reply_to_message;
+}
+
+/**
+ * A reply embeds its target's whole payload, so an `/ignore` target would ride into the
+ * cache — and back out on every hydration — inside each message that quotes it. Dropping
+ * the embedded copy also drops this node's `replyToId`, which would otherwise point at a
+ * message the cache must never hold. The live turn still quotes from the update itself.
+ */
+function detachIgnoredReplyTarget(
+  msg: Message,
+  botUsername: string | undefined,
+  ignoreEnabled: boolean,
+): Message {
+  const replyMessage = resolveEmbeddedReplyMessage(msg);
+  if (!ignoreEnabled || !replyMessage || !isTelegramIgnoredMessage(replyMessage, botUsername)) {
+    return msg;
+  }
+  const { reply_to_message: _ignoredTarget, ...cacheable } = msg;
+  return cacheable as Message;
 }
 
 export function isTelegramMessageFromCurrentBot(msg: Message, botUserId?: number): boolean {
@@ -294,6 +315,8 @@ function normalizeMessageNodes(
     promptContextProjectionMarker?: TelegramPromptContextProjectionMarker;
     resolvedMedia?: TelegramResolvedMedia;
     threadBinding?: TelegramMessageThreadBinding;
+    botUsername?: string;
+    ignoreEnabled?: boolean;
   },
 ): TelegramCachedMessageObservation[] {
   const observations: TelegramCachedMessageObservation[] = [];
@@ -301,13 +324,18 @@ function normalizeMessageNodes(
   const nodeThreadId = (node: TelegramCachedMessageNode) =>
     parseTelegramMessageThreadId(node.threadId);
   const visit = (
-    message: Message,
+    observed: Message,
     inheritedThreadId: number | undefined,
     mode: TelegramMessageObservationMode,
     promptContextProjectionMarker?: TelegramPromptContextProjectionMarker,
     threadBinding?: TelegramMessageThreadBinding,
     resolvedMedia?: TelegramResolvedMedia,
   ) => {
+    const message = detachIgnoredReplyTarget(
+      observed,
+      params.botUsername,
+      params.ignoreEnabled !== false,
+    );
     const embeddedThreadId = parseTelegramMessageThreadId(
       (message as { message_thread_id?: unknown }).message_thread_id,
     );
@@ -357,7 +385,12 @@ function parseSafeMessageId(value: string | undefined): number | undefined {
   return value === undefined ? undefined : parseStrictPositiveInteger(value);
 }
 
-function parsePersistedCacheValue(key: string, value: unknown) {
+function parsePersistedCacheValue(
+  key: string,
+  value: unknown,
+  botUsername?: string,
+  ignoreEnabled = true,
+) {
   if (
     !isRecord(value) ||
     (value.version !== undefined && value.version !== TELEGRAM_MESSAGE_CACHE_PERSISTED_VERSION)
@@ -366,6 +399,12 @@ function parsePersistedCacheValue(key: string, value: unknown) {
   }
   const separatorIndex = key.lastIndexOf(":");
   if (separatorIndex === -1 || !isTelegramMessageCacheSourceMessage(value.sourceMessage)) {
+    return [];
+  }
+  // A row written before the command existed can be the `/ignore` message itself. The
+  // ingress-recorded ids are gone after a restart, so hydration is the last boundary
+  // that can keep that text out of the agent's context.
+  if (ignoreEnabled && isTelegramIgnoredMessage(value.sourceMessage, botUsername)) {
     return [];
   }
   const threadId = parseTelegramMessageThreadId(value.threadId);
@@ -385,6 +424,8 @@ function parsePersistedCacheValue(key: string, value: unknown) {
     ...(promptContextProjectionMarker ? { promptContextProjectionMarker } : {}),
     ...(threadBinding ? { threadBinding } : {}),
     ...(resolvedMedia ? { resolvedMedia } : {}),
+    ...(botUsername ? { botUsername } : {}),
+    ignoreEnabled,
   }).map(({ node, mode }) => ({
     key: `${key.slice(0, separatorIndex + 1)}${node.messageId}`,
     node,
@@ -527,6 +568,8 @@ async function hydrateMessageCacheBucket(
   bucket: TelegramMessageCacheBucket,
   maxMessages: number,
   scopeKey?: string,
+  botUsername?: string,
+  ignoreEnabled = true,
 ): Promise<void> {
   if (bucket.hydrated) {
     return;
@@ -547,7 +590,7 @@ async function hydrateMessageCacheBucket(
       : storeEntries;
 
     for (const { key, value } of scopedStoreEntries) {
-      for (const entry of parsePersistedCacheValue(key, value)) {
+      for (const entry of parsePersistedCacheValue(key, value, botUsername, ignoreEnabled)) {
         upsertCachedMessageNode({
           messages: bucket.messages,
           key: entry.key,
@@ -612,7 +655,16 @@ export function createTelegramMessageCache(params?: {
   scope?: string;
   persistentStore?: TelegramMessageCachePersistentStore;
   bucketKey?: string;
+  /**
+   * Startup bot identity, used only to recognize an `/ignore@ThisBot` target in text
+   * that ingress never observed live: rows persisted by an older build. Live decisions
+   * come from ingress, which resolves the identity per update.
+   */
+  botUsername?: string;
+  ignoreEnabled?: boolean;
 }): TelegramMessageCache {
+  const botUsername = params?.botUsername;
+  const ignoreEnabled = params?.ignoreEnabled !== false;
   const persistentStore = params?.persistentStore ?? resolveDefaultPersistentStore();
   const maxMessages =
     params?.maxMessages ??
@@ -629,7 +681,7 @@ export function createTelegramMessageCache(params?: {
   const { messages } = bucket;
 
   const get: TelegramMessageCache["get"] = async ({ accountId, chatId, messageId }) => {
-    await hydrateMessageCacheBucket(bucket, maxMessages, scopeKey);
+    await hydrateMessageCacheBucket(bucket, maxMessages, scopeKey, botUsername, ignoreEnabled);
     if (!messageId) {
       return null;
     }
@@ -648,7 +700,7 @@ export function createTelegramMessageCache(params?: {
     chatId: string | number;
     threadId?: number;
   }) => {
-    await hydrateMessageCacheBucket(bucket, maxMessages, scopeKey);
+    await hydrateMessageCacheBucket(bucket, maxMessages, scopeKey, botUsername, ignoreEnabled);
     const prefix = telegramMessageCacheKeyPrefix({ scopeKey, ...paramsLocal });
     const normalizedThreadId = parseTelegramMessageThreadId(paramsLocal.threadId);
     if (paramsLocal.threadId != null && normalizedThreadId === undefined) {
@@ -670,13 +722,42 @@ export function createTelegramMessageCache(params?: {
     record: async ({
       accountId,
       botUserId,
+      botUsername: observedBotUsername,
       chatId,
       msg,
       promptContextProjection,
       providerObservedThread,
       threadId,
     }) => {
-      await hydrateMessageCacheBucket(bucket, maxMessages, scopeKey);
+      await hydrateMessageCacheBucket(bucket, maxMessages, scopeKey, botUsername, ignoreEnabled);
+      const effectiveBotUsername = observedBotUsername ?? botUsername;
+      if (ignoreEnabled && isTelegramIgnoredMessage(msg, effectiveBotUsername)) {
+        const key = telegramMessageCacheKey({
+          scopeKey,
+          accountId,
+          chatId,
+          messageId: String(msg.message_id),
+        });
+        messages.delete(key);
+        // The state store has no delete primitive. Overwrite any pre-edit row with a
+        // content-free command tombstone; hydration rejects it via the same predicate.
+        const tombstoneMessage = {
+          chat: msg.chat,
+          message_id: msg.message_id,
+          date: msg.date,
+          ...(msg.from ? { from: msg.from } : {}),
+          text: "/ignore",
+          entities: [{ type: "bot_command" as const, offset: 0, length: 7 }],
+        } as Message;
+        const tombstone = normalizeMessageNode(tombstoneMessage, { threadId });
+        await persistCachedNode({
+          bucket,
+          key,
+          node: tombstone,
+          ...(botUserId !== undefined ? { botUserId } : {}),
+        });
+        return tombstone;
+      }
       const threadBinding = createTelegramMessageThreadBinding(providerObservedThread);
       const observations = normalizeMessageNodes(msg, {
         threadId,
@@ -689,6 +770,8 @@ export function createTelegramMessageCache(params?: {
             }
           : {}),
         ...(threadBinding ? { threadBinding } : {}),
+        ...(effectiveBotUsername ? { botUsername: effectiveBotUsername } : {}),
+        ignoreEnabled,
       });
       const currentObservation = observations.at(-1)!;
       let recordedEntry = currentObservation.node;
@@ -710,7 +793,7 @@ export function createTelegramMessageCache(params?: {
       return recordedEntry;
     },
     recordResolvedMedia: async ({ accountId, botUserId, chatId, messageId, media }) => {
-      await hydrateMessageCacheBucket(bucket, maxMessages, scopeKey);
+      await hydrateMessageCacheBucket(bucket, maxMessages, scopeKey, botUsername, ignoreEnabled);
       const key = telegramMessageCacheKey({ scopeKey, accountId, chatId, messageId });
       const node = messages.get(key);
       if (!node) {
@@ -768,7 +851,7 @@ export function createTelegramMessageCache(params?: {
       if (targetId === undefined) {
         return null;
       }
-      await hydrateMessageCacheBucket(bucket, maxMessages, scopeKey);
+      await hydrateMessageCacheBucket(bucket, maxMessages, scopeKey, botUsername, ignoreEnabled);
       const prefix = telegramMessageCacheKeyPrefix({ scopeKey, accountId, chatId });
       const normalizedThreadId = parseTelegramMessageThreadId(threadId);
       if (threadId != null && normalizedThreadId === undefined) {

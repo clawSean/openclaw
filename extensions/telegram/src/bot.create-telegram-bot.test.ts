@@ -2966,6 +2966,116 @@ describe("createTelegramBot", () => {
       fetchSpy.mockRestore();
     }
   });
+
+  it("drops /ignore before dispatch and replies with help for the bare command", async () => {
+    loadConfig.mockReturnValue({
+      commands: { native: true },
+      channels: { telegram: { dmPolicy: "open", allowFrom: ["*"] } },
+    });
+    dispatchReplyWithBufferedBlockDispatcher.mockClear();
+    sendChatActionSpy.mockClear();
+    sendMessageSpy.mockClear();
+    createTelegramBot({ token: "tok" });
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
+    const base = {
+      chat: { id: 1234, type: "private" },
+      date: 1736380800,
+      from: { id: 999, username: "human" },
+    };
+
+    await handler({
+      message: {
+        ...base,
+        message_id: 420,
+        text: "/ignore side chatter",
+        entities: [{ type: "bot_command", offset: 0, length: 7 }],
+      },
+      me: { id: 7, username: "openclaw_bot" },
+      getFile: async () => ({ download: async () => new Uint8Array() }),
+    });
+    await handler({
+      message: {
+        ...base,
+        message_id: 421,
+        text: "/ignore",
+        entities: [{ type: "bot_command", offset: 0, length: 7 }],
+      },
+      me: { id: 7, username: "openclaw_bot" },
+      getFile: async () => ({ download: async () => new Uint8Array() }),
+    });
+
+    expect(dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
+    expect(sendChatActionSpy).not.toHaveBeenCalled();
+    expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+    expect(String(sendMessageSpy.mock.calls[0]?.[1])).toContain(
+      "Replying to it may include it again",
+    );
+  });
+
+  it("treats /ignore as ordinary text when native commands are disabled", async () => {
+    loadConfig.mockReturnValue({
+      commands: { native: false },
+      channels: { telegram: { dmPolicy: "open", allowFrom: ["*"] } },
+    });
+    dispatchReplyWithBufferedBlockDispatcher.mockClear();
+    createTelegramBot({ token: "tok" });
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
+
+    await handler({
+      message: {
+        chat: { id: 1234, type: "private" },
+        message_id: 422,
+        date: 1736380800,
+        from: { id: 999, username: "human" },
+        text: "/ignore ordinary text",
+        entities: [{ type: "bot_command", offset: 0, length: 7 }],
+      },
+      me: { id: 7, username: "openclaw_bot" },
+      getFile: async () => ({ download: async () => new Uint8Array() }),
+    });
+
+    expect(dispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels an album when /ignore arrives after a captionless sibling", async () => {
+    loadConfig.mockReturnValue({
+      commands: { native: true },
+      channels: { telegram: { dmPolicy: "open", allowFrom: ["*"] } },
+    });
+    dispatchReplyWithBufferedBlockDispatcher.mockClear();
+    const getFileSpy = vi.fn(async () => ({ file_path: "photos/p1.jpg" }));
+    createTelegramBot({ token: "tok", testTimings: TELEGRAM_TEST_TIMINGS });
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
+    const base = {
+      chat: { id: 1234, type: "private" },
+      date: 1736380800,
+      from: { id: 999, username: "human" },
+      media_group_id: "album-ignore-late",
+      photo: [{ file_id: "p1", file_unique_id: "u1", width: 1, height: 1 }],
+    };
+
+    await handler({
+      message: { ...base, message_id: 423 },
+      me: { id: 7, username: "openclaw_bot" },
+      getFile: getFileSpy,
+    });
+    await handler({
+      message: {
+        ...base,
+        message_id: 424,
+        caption: "/ignore trip photos",
+        caption_entities: [{ type: "bot_command", offset: 0, length: 7 }],
+      },
+      me: { id: 7, username: "openclaw_bot" },
+      getFile: getFileSpy,
+    });
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, TELEGRAM_TEST_TIMINGS.mediaGroupFlushMs + 20);
+    });
+
+    expect(getFileSpy).not.toHaveBeenCalled();
+    expect(dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
+  });
   it("triggers typing cue via onReplyStart", async () => {
     dispatchReplyWithBufferedBlockDispatcher.mockImplementationOnce(
       async ({ dispatcherOptions }) => {

@@ -241,6 +241,11 @@ export const registerTelegramNativeCommands = ({
     | undefined;
   for (const command of nativeCommandsToHandle) {
     const normalizedCommandName = normalizeTelegramCommandName(command.name);
+    // The early ingress pipeline owns `/ignore`; registering the generic executor here
+    // would bypass its pre-cache/pre-media contract.
+    if (normalizedCommandName === "ignore") {
+      continue;
+    }
     const handleNativeCommand = async (
       botUser: Context["me"],
       msg: NonNullable<Context["message"]>,

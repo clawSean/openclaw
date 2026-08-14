@@ -73,6 +73,8 @@ type TelegramGroupMediaDisposition = "process" | "skip" | "silent-ingest";
 
 interface TelegramInboundMedia {
   handleMediaGroup: (input: TelegramMediaGroupInput) => boolean;
+  discardMediaGroup: (chatId: number, mediaGroupId: string) => Promise<void>;
+  isMediaGroupDiscarded: (chatId: number, mediaGroupId: string) => boolean;
   resolveUnaddressedGroupMediaDisposition: (
     authorization: MediaAuthorization & { ctx: TelegramContext; msg: Message },
   ) => Promise<TelegramGroupMediaDisposition>;
@@ -113,6 +115,7 @@ export function createTelegramInboundMedia({
     latestPromptContextAmbientWatermark,
     mergeDispatchDedupeClaims,
     releaseDispatchDedupeClaims,
+    forgetMessageForReplyChain,
     buildFailedProcessingResult,
     settleSpooledReplayParticipants,
     createSpooledReplayParticipantForBufferedWork,
@@ -126,6 +129,7 @@ export function createTelegramInboundMedia({
       ? Math.max(10, Math.floor(opts.testTimings.mediaGroupFlushMs))
       : MEDIA_GROUP_TIMEOUT_MS;
   const buffer = new Map<string, BufferedMediaGroupEntry>();
+  const discardedGroups = new Map<string, ReturnType<typeof setTimeout>>();
   const queue = new KeyedAsyncQueue();
 
   const resolveUnaddressedGroupMediaDisposition = async (
@@ -425,10 +429,42 @@ export function createTelegramInboundMedia({
       await processMediaGroup(entry).catch(() => undefined);
     });
 
+  const discardMediaGroup = async (chatId: number, mediaGroupId: string): Promise<void> => {
+    const groupKey = `${chatId}:${mediaGroupId}`;
+    const priorExpiry = discardedGroups.get(groupKey);
+    if (priorExpiry) {
+      clearTimeout(priorExpiry);
+    }
+    discardedGroups.set(
+      groupKey,
+      setTimeout(() => discardedGroups.delete(groupKey), timeoutMs * 2),
+    );
+    const prefix = `media:${chatId}:`;
+    const suffix = `:${mediaGroupId}`;
+    for (const [key, entry] of buffer) {
+      if (!key.startsWith(prefix) || !key.endsWith(suffix)) {
+        continue;
+      }
+      clearTimeout(entry.timer);
+      buffer.delete(key);
+      await Promise.all(
+        entry.messages.map(({ ctx, msg }) => forgetMessageForReplyChain(msg, ctx.me?.id)),
+      );
+      releaseDispatchDedupeClaims(entry.dispatchDedupeClaims);
+      settleSpooledReplayParticipants(entry.spooledReplayParticipants, { kind: "ignored" });
+    }
+  };
+  const isMediaGroupDiscarded = (chatId: number, mediaGroupId: string): boolean =>
+    discardedGroups.has(`${chatId}:${mediaGroupId}`);
+
   const handleMediaGroup = (input: TelegramMediaGroupInput): boolean => {
     const mediaGroupId = input.msg.media_group_id;
     if (!mediaGroupId) {
       return false;
+    }
+    if (discardedGroups.has(`${input.chatId}:${mediaGroupId}`)) {
+      releaseDispatchDedupeClaims(input.dispatchDedupeClaims);
+      return true;
     }
     const threadId = input.resolvedThreadId ?? input.dmThreadId;
     const key = `media:${input.chatId}:${threadId ?? "main"}:${mediaGroupId}`;
@@ -477,5 +513,10 @@ export function createTelegramInboundMedia({
     return true;
   };
 
-  return { handleMediaGroup, resolveUnaddressedGroupMediaDisposition };
+  return {
+    discardMediaGroup,
+    handleMediaGroup,
+    isMediaGroupDiscarded,
+    resolveUnaddressedGroupMediaDisposition,
+  };
 }

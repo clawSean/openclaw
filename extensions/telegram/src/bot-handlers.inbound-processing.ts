@@ -45,6 +45,8 @@ import type { TelegramMessageDispatchReplayClaim } from "./message-dispatch-dedu
 
 export interface TelegramInboundProcessing {
   processInboundMessage: (params: TelegramInboundMessage) => Promise<TelegramInboundDisposition>;
+  discardMediaGroup: (chatId: number, mediaGroupId: string) => Promise<void>;
+  isMediaGroupDiscarded: (chatId: number, mediaGroupId: string) => boolean;
 }
 
 type TelegramInboundMessage = {
@@ -102,7 +104,12 @@ export function createTelegramInboundProcessing({
     handleTextFragment,
   } = createTelegramInboundBuffers({ params: { cfg, bot, runtime, opts }, message });
 
-  const { handleMediaGroup, resolveUnaddressedGroupMediaDisposition } = createTelegramInboundMedia({
+  const {
+    discardMediaGroup,
+    handleMediaGroup,
+    isMediaGroupDiscarded,
+    resolveUnaddressedGroupMediaDisposition,
+  } = createTelegramInboundMedia({
     params: {
       accountId,
       bot,
@@ -364,5 +371,5 @@ export function createTelegramInboundProcessing({
     return shouldBufferDebounce ? { kind: "buffered", buffer: "debounce" } : { kind: "processed" };
   };
 
-  return { processInboundMessage };
+  return { discardMediaGroup, isMediaGroupDiscarded, processInboundMessage };
 }

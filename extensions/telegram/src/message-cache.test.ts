@@ -75,6 +75,15 @@ function photo(file_id: string) {
   return [{ file_id, file_unique_id: `${file_id}-unique`, width: 640, height: 480 }];
 }
 
+// Telegram marks the leading `/name` token as a `bot_command` entity; `/ignore` is only
+// a command when that entity is present, so the fixture carries it like a real update.
+function ignoredMessage(messageId: number, text = "/ignore the door code is 4821") {
+  return message(messageId, "Ada", {
+    text,
+    entities: [{ type: "bot_command", offset: 0, length: text.split(" ")[0]?.length ?? 0 }],
+  });
+}
+
 function botMessage(messageId: number, text: string, overrides: Record<string, unknown> = {}) {
   return message(messageId, "OpenClaw", {
     text,
@@ -746,5 +755,129 @@ describe("telegram message cache", () => {
     const recent = await recentBefore(cache, "9007199254740992");
 
     expect(recent).toEqual([]);
+  });
+
+  it("quotes an ignored reply target for the turn the human replied to it", async () => {
+    const { bucketKey, store } = createMemoryStore();
+    const cache = cacheFor(bucketKey, store);
+    const reply = message(9151, "Ada", {
+      text: "what do you make of that?",
+      reply_to_message: ignoredMessage(9150),
+    });
+
+    await record(cache, reply);
+
+    // Replying is deliberate: the quote belongs in this turn's prompt.
+    expect((await replyChain(cache, reply)).map((node) => node.body)).toEqual([
+      "/ignore the door code is 4821",
+    ]);
+  });
+
+  it("keeps an ignored reply target out of the durable cache and out of later turns", async () => {
+    const { bucketKey, entries, store } = createMemoryStore();
+    const cache = cacheFor(bucketKey, store);
+    const reply = message(9153, "Ada", {
+      text: "what do you make of that?",
+      reply_to_message: ignoredMessage(9152),
+    });
+
+    const recorded = await record(cache, reply);
+
+    expect(await get(cache, "9152")).toBeNull();
+    // No dangling pointer either: nothing may lead a later turn back to the target.
+    expect(recorded.replyToId).toBeUndefined();
+    expect(entries.size).toBe(1);
+    expect(JSON.stringify(Array.from(entries.values()))).not.toContain("door code");
+    expect(await reloadGet(bucketKey, store, "9152")).toBeNull();
+    expect((await reloadGet(bucketKey, store, "9153"))?.replyToId).toBeUndefined();
+  });
+
+  it("uses the live bot identity to detach an addressed ignored reply target", async () => {
+    const { bucketKey, entries, store } = createMemoryStore();
+    const cache = cacheFor(bucketKey, store);
+    const target = ignoredMessage(9156, "/ignore@OurBot the door code is 4821");
+    const reply = message(9157, "Ada", {
+      text: "what do you make of that?",
+      reply_to_message: target,
+    });
+
+    const recorded = await cache.record({
+      accountId: "default",
+      chatId: reply.chat.id,
+      msg: reply,
+      botUsername: "OurBot",
+    });
+
+    expect(recorded.replyToId).toBeUndefined();
+    expect(JSON.stringify(Array.from(entries.values()))).not.toContain("door code");
+  });
+
+  it("replaces an ordinary cached row when an edit adds /ignore", async () => {
+    const { bucketKey, entries, store } = createMemoryStore();
+    const cache = cacheFor(bucketKey, store);
+    await record(cache, message(9158, "Ada", { text: "old ambient text" }));
+
+    await record(cache, ignoredMessage(9158, "/ignore corrected text"));
+
+    expect(await get(cache, "9158")).toBeNull();
+    expect(JSON.stringify(Array.from(entries.values()))).not.toContain("old ambient text");
+    expect(JSON.stringify(Array.from(entries.values()))).not.toContain("corrected text");
+    expect(await reloadGet(bucketKey, store, "9158")).toBeNull();
+  });
+
+  it("drops a persisted row whose own text is the ignored command", async () => {
+    const { bucketKey, entries, store } = createMemoryStore();
+    await record(cacheFor(bucketKey, store), message(9154, "Ada", { text: "ordinary" }));
+    const [persistedKey, persistedValue] = onlyEntry(entries);
+    // A row written before /ignore existed still has to stay out of the prompt, and a
+    // restart has already forgotten the ids ingress recorded.
+    entries.set(persistedKey, { ...persistedValue, sourceMessage: ignoredMessage(9154) });
+
+    expect(await reloadGet(bucketKey, store, "9154")).toBeNull();
+  });
+
+  it("drops a persisted addressed command only when the bot identity is known", async () => {
+    const { bucketKey, entries, store } = createMemoryStore();
+    await record(cacheFor(bucketKey, store), message(9155, "Ada", { text: "ordinary" }));
+    const [persistedKey, persistedValue] = onlyEntry(entries);
+    entries.set(persistedKey, {
+      ...persistedValue,
+      sourceMessage: ignoredMessage(9155, "/ignore@OurBot the door code is 4821"),
+    });
+
+    resetCache();
+    const known = createTelegramMessageCache({
+      bucketKey,
+      persistentStore: store,
+      botUsername: "OurBot",
+    });
+    expect(await get(known, "9155")).toBeNull();
+
+    // Without the startup identity the addressed form reads as another bot's command and
+    // hydrates as an ordinary message. Live decisions never rely on this path.
+    expect(await reloadGet(bucketKey, store, "9155")).not.toBeNull();
+  });
+
+  it("keeps /ignore ordinary in cache when native commands are disabled", async () => {
+    const { bucketKey, store } = createMemoryStore();
+    const cache = createTelegramMessageCache({
+      bucketKey,
+      persistentStore: store,
+      botUsername: "OurBot",
+      ignoreEnabled: false,
+    });
+    const source = ignoredMessage(9159, "/ignore ordinary text");
+    await record(cache, source);
+    const reply = message(9160, "Ada", {
+      text: "reply",
+      reply_to_message: source,
+    });
+    await record(cache, reply);
+
+    expect((await get(cache, "9159"))?.body).toBe("/ignore ordinary text");
+    expect((await get(cache, "9160"))?.replyToId).toBe("9159");
+    expect((await replyChain(cache, reply)).map((node) => node.body)).toEqual([
+      "/ignore ordinary text",
+    ]);
   });
 });

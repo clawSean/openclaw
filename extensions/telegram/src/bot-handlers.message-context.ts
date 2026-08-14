@@ -2,6 +2,7 @@ import type { Message } from "grammy/types";
 import { formatMediaPlaceholderText } from "openclaw/plugin-sdk/channel-inbound";
 import { resolveStoredModelOverride } from "openclaw/plugin-sdk/command-auth-native";
 import type { OpenClawConfig, TelegramAccountConfig } from "openclaw/plugin-sdk/config-contracts";
+import { resolveNativeCommandsEnabled } from "openclaw/plugin-sdk/native-command-config-runtime";
 import { DEFAULT_GROUP_HISTORY_LIMIT } from "openclaw/plugin-sdk/reply-history";
 import {
   getSessionEntry,
@@ -300,12 +301,20 @@ export function createTelegramMessageContextRuntime({
   RegisterTelegramHandlerParams,
   "cfg" | "accountId" | "ownerAgentId" | "opts" | "telegramCfg" | "telegramDeps"
 >) {
+  const ignoreEnabled = resolveNativeCommandsEnabled({
+    providerId: "telegram",
+    providerSetting: telegramCfg.commands?.native,
+    globalSetting: cfg.commands?.native,
+  });
   const messageCache = createTelegramMessageCache({
+    ignoreEnabled,
     scope: resolveTelegramMessageCacheScope(
       telegramDeps.resolveStorePath(cfg.session?.store, {
         agentId: ownerAgentId,
       }),
     ),
+    // Startup identity recognizes addressed commands in legacy persisted rows.
+    ...(ignoreEnabled && opts.botInfo?.username ? { botUsername: opts.botInfo.username } : {}),
   });
   const resolvePromptSender = (
     node: TelegramCachedMessageNode,
@@ -330,14 +339,31 @@ export function createTelegramMessageContextRuntime({
     msg: Message,
     providerObservedThread?: TelegramThreadSpec,
     botUserId?: number,
+    botUsername?: string,
   ) =>
     messageCache.record({
       accountId,
       chatId: msg.chat.id,
       msg,
       ...(botUserId !== undefined ? { botUserId } : {}),
+      ...(botUsername ? { botUsername } : {}),
       ...(providerObservedThread ? { providerObservedThread } : {}),
       ...(providerObservedThread?.id != null ? { threadId: providerObservedThread.id } : {}),
+    });
+
+  const forgetMessageForReplyChain = (msg: Message, botUserId?: number) =>
+    messageCache.record({
+      accountId,
+      chatId: msg.chat.id,
+      msg: {
+        chat: msg.chat,
+        message_id: msg.message_id,
+        date: msg.date,
+        ...(msg.from ? { from: msg.from } : {}),
+        text: "/ignore",
+        entities: [{ type: "bot_command", offset: 0, length: 7 }],
+      } as Message,
+      ...(botUserId !== undefined ? { botUserId } : {}),
     });
 
   const recordMessageResolvedMedia = (params: {
@@ -556,6 +582,7 @@ export function createTelegramMessageContextRuntime({
 
   return {
     recordMessageForReplyChain,
+    forgetMessageForReplyChain,
     recordMessageResolvedMedia,
     recordReplyMessageResolvedMedia,
     resolveCachedMessageThreadSpec,

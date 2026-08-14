@@ -157,6 +157,7 @@ describe("createTelegramBot command menu", () => {
           allowFrom: ["*"],
           customCommands: [
             { command: "status", description: "Custom status" },
+            { command: "ignore", description: "Custom ignore" },
             { command: "custom_backup", description: "Git backup" },
           ],
         },
@@ -202,7 +203,10 @@ describe("createTelegramBot command menu", () => {
       description: nativeStatus.description,
     });
     expect(countMatching(registered, (command) => command.command === "status")).toBe(1);
-    expect(errorSpy).toHaveBeenCalled();
+    expect(countMatching(registered, (command) => command.command === "ignore")).toBe(1);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Telegram custom command "/ignore" conflicts with a native command.'),
+    );
   });
 
   it("registers custom commands when native commands are disabled", async () => {

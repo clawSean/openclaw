@@ -118,7 +118,9 @@ export interface TelegramMessagePipeline {
     msg: Message,
     providerObservedThread?: TelegramThreadSpec,
     botUserId?: number,
+    botUsername?: string,
   ) => Promise<TelegramCachedMessageNode>;
+  forgetMessageForReplyChain: (msg: Message, botUserId?: number) => Promise<unknown>;
   recordMessageResolvedMedia: (params: {
     msg: Message;
     media: TelegramResolvedMedia;
