@@ -23,7 +23,6 @@ import type {
 import {
   PROVIDER_USAGE_TIMEOUT_MS,
   ignoredErrors,
-  isProviderUsageProfileEligible,
   providerUsageLabel,
   raceUsageTimeout,
   providerUsageDisplayNameForId,
@@ -64,26 +63,34 @@ type UsageSummaryOptions = {
 const PROFILE_USAGE_CONCURRENCY = 3;
 
 function resolveUsageProfileRefs(params: {
-  providers: UsageProviderId[];
+  descriptors: ProviderUsagePluginDescriptor[];
   agentDir?: string;
   config: OpenClawConfig;
 }): Array<{ provider: UsageProviderId; authProfileId: string }> {
-  const providerSet = new Set(params.providers);
+  const descriptorByProfileProvider = new Map(
+    params.descriptors.flatMap((descriptor) =>
+      descriptor.profileProviderIds.map((provider) => [provider, descriptor] as const),
+    ),
+  );
+  const discoveryProviders = [...descriptorByProfileProvider.keys()];
   const store = ensureAuthProfileStore(params.agentDir, {
     allowKeychainPrompt: false,
     externalCli: externalCliDiscoveryForProviders({
       cfg: params.config,
-      providers: params.providers,
+      providers: discoveryProviders,
       allowKeychainPrompt: false,
     }),
     readOnly: true,
     syncExternalCli: false,
   });
-  const credentialProviders = new Set(
-    Object.values(store.profiles)
+  const credentialProviders = new Set([
+    ...Object.values(params.config.auth?.profiles ?? {})
+      .map((profile) => profile?.provider)
+      .filter((provider): provider is string => Boolean(provider)),
+    ...Object.values(store.profiles)
       .map((credential) => credential?.provider)
       .filter((provider): provider is string => Boolean(provider)),
-  );
+  ]);
   const refs: Array<{ provider: UsageProviderId; authProfileId: string }> = [];
   const seen = new Set<string>();
   for (const credentialProvider of credentialProviders) {
@@ -96,19 +103,21 @@ function resolveUsageProfileRefs(params: {
     );
     for (const authProfileId of profileIds) {
       const credential = store.profiles[authProfileId];
-      if (
-        !credential ||
-        !isProviderUsageProfileEligible({
-          provider: credential.provider,
-          credentialType: credential.type,
-        })
-      ) {
+      if (!credential) {
         continue;
       }
-      const provider = resolveUsageProviderId(credential.provider, {
-        credentialType: credential.type,
-      });
-      if (!provider || !providerSet.has(provider) || seen.has(authProfileId)) {
+      const descriptor =
+        params.descriptors.find(
+          (candidate) =>
+            candidate.provider ===
+            resolveUsageProviderId(credential.provider, { credentialType: credential.type }),
+        ) ?? descriptorByProfileProvider.get(credential.provider);
+      const provider = descriptor?.provider;
+      if (
+        !provider ||
+        !descriptor.profileCredentialTypes.includes(credential.type) ||
+        seen.has(authProfileId)
+      ) {
         continue;
       }
       seen.add(authProfileId);
@@ -119,7 +128,7 @@ function resolveUsageProfileRefs(params: {
 }
 
 async function loadProfileUsageSnapshots(params: {
-  providers: UsageProviderId[];
+  descriptors: ProviderUsagePluginDescriptor[];
   agentDir?: string;
   workspaceDir?: string;
   config: OpenClawConfig;
@@ -219,21 +228,29 @@ export async function loadProviderUsageSummary(
     throw new Error("fetch is not available");
   }
 
+  const registeredDescriptors = listProviderUsagePluginDescriptors({
+    config,
+    workspaceDir: opts.workspaceDir,
+    env,
+  });
   const descriptors: ProviderUsagePluginDescriptor[] = opts.providers
-    ? opts.providers.map((provider) => ({
-        provider,
-        displayName: providerUsageLabel(provider) ?? provider,
-      }))
+    ? opts.providers.map(
+        (provider) =>
+          registeredDescriptors.find((descriptor) => descriptor.provider === provider) ?? {
+            provider,
+            displayName: providerUsageLabel(provider) ?? provider,
+            profileProviderIds: [provider],
+            profileCredentialTypes: ["oauth", "token"],
+          },
+      )
     : opts.auth
       ? opts.auth.map((auth) => ({
           provider: auth.provider,
           displayName: providerUsageLabel(auth.provider) ?? auth.provider,
+          profileProviderIds: [auth.provider],
+          profileCredentialTypes: ["oauth", "token"],
         }))
-      : listProviderUsagePluginDescriptors({
-          config,
-          workspaceDir: opts.workspaceDir,
-          env,
-        });
+      : registeredDescriptors;
   const displayNames = new Map(
     descriptors.map((descriptor) => [descriptor.provider, descriptor.displayName]),
   );
@@ -249,7 +266,7 @@ export async function loadProviderUsageSummary(
     opts.auth || opts.includeProfiles === false
       ? Promise.resolve<ProviderUsageProfileSnapshot[]>([])
       : loadProfileUsageSnapshots({
-          providers: descriptors.map((descriptor) => descriptor.provider),
+          descriptors,
           agentDir: opts.agentDir,
           workspaceDir: opts.workspaceDir,
           config,

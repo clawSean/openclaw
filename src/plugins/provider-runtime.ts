@@ -742,6 +742,8 @@ export async function resolveProviderUsageSnapshotWithPlugin(params: {
 export type ProviderUsagePluginDescriptor = {
   provider: UsageProviderId;
   displayName: string;
+  profileProviderIds: string[];
+  profileCredentialTypes: AuthProfileCredential["type"][];
 };
 
 /** Lists provider plugins that own the complete usage auth + fetch lifecycle. */
@@ -771,6 +773,13 @@ export function listProviderUsagePluginDescriptors(params: {
       descriptors.set(provider, {
         provider,
         displayName: normalizeOptionalString(plugin.label) ?? provider,
+        profileProviderIds: uniqueStrings([
+          provider,
+          ...(plugin.usageProfilePolicy?.providerIds ?? []),
+        ]),
+        profileCredentialTypes: uniqueStrings(
+          plugin.usageProfilePolicy?.credentialTypes ?? ["oauth", "token"],
+        ) as AuthProfileCredential["type"][],
       });
     }
   }

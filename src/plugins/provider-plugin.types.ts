@@ -376,6 +376,11 @@ export type ProviderPlugin = {
     | ProviderResolvedUsageAuth
     | null
     | undefined;
+  /** Auth-profile providers and credential kinds that may be fanned out for usage snapshots. */
+  usageProfilePolicy?: {
+    providerIds?: readonly string[];
+    credentialTypes?: readonly AuthProfileCredential["type"][];
+  };
   /**
    * Usage/quota snapshot fetch hook.
    *

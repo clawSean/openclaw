@@ -70,28 +70,17 @@ export function resolveUsageProviderId(
   return normalized || undefined;
 }
 
-const API_KEY_USAGE_PROFILE_PROVIDERS: ReadonlySet<UsageProviderId> = new Set([
-  "clawrouter",
-  "deepseek",
-]);
-
-/** Keep profile fan-out on OAuth/token auth unless a provider is explicitly safe for API keys. */
+/** Returns whether a credential has the default OAuth/token usage-profile shape. */
 export function isProviderUsageProfileEligible(params: {
   provider?: string | null;
   credentialType?: string | null;
 }): boolean {
-  if (params.credentialType === "oauth" || params.credentialType === "token") {
-    return Boolean(
-      resolveUsageProviderId(params.provider, { credentialType: params.credentialType }),
-    );
-  }
-  if (params.credentialType !== "api_key") {
+  if (params.credentialType !== "oauth" && params.credentialType !== "token") {
     return false;
   }
-  const provider = resolveUsageProviderId(params.provider, {
-    credentialType: params.credentialType,
-  });
-  return provider ? API_KEY_USAGE_PROFILE_PROVIDERS.has(provider) : false;
+  return Boolean(
+    resolveUsageProviderId(params.provider, { credentialType: params.credentialType }),
+  );
 }
 
 export const ignoredErrors = new Set([

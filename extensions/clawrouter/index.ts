@@ -249,6 +249,7 @@ export default defineSingleProviderPluginEntry({
         });
         return apiKey ? { token: apiKey } : null;
       },
+      usageProfilePolicy: { credentialTypes: ["oauth", "token", "api_key"] },
       fetchUsageSnapshot: async (ctx) =>
         await fetchClawRouterUsage({
           token: ctx.token,

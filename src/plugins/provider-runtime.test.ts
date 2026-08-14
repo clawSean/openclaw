@@ -492,7 +492,12 @@ describe("provider-runtime", () => {
     ]);
 
     expect(listProviderUsagePluginDescriptors({ env: process.env })).toEqual([
-      { provider: "declared", displayName: "Declared" },
+      {
+        provider: "declared",
+        displayName: "Declared",
+        profileProviderIds: ["declared"],
+        profileCredentialTypes: ["oauth", "token"],
+      },
     ]);
     expect(resolvePluginProvidersMock).toHaveBeenCalledWith(
       expect.objectContaining({ onlyPluginIds: ["multi-provider"] }),
@@ -2256,7 +2261,12 @@ describe("provider-runtime", () => {
     });
 
     expect(listProviderUsagePluginDescriptors({ env: process.env })).toEqual([
-      { provider: "demo", displayName: "Demo" },
+      {
+        provider: "demo",
+        displayName: "Demo",
+        profileProviderIds: ["demo"],
+        profileCredentialTypes: ["oauth", "token"],
+      },
     ]);
 
     expect(

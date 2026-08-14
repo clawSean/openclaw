@@ -47,6 +47,30 @@ vi.mock("./provider-usage.auth.js", () => ({
   resolveProviderAuths: async () => [],
 }));
 
+vi.mock("../plugins/provider-runtime.js", () => ({
+  listProviderUsagePluginDescriptors: () => [
+    {
+      provider: "anthropic",
+      displayName: "Claude",
+      profileProviderIds: ["anthropic", "claude-cli"],
+      profileCredentialTypes: ["oauth", "token"],
+    },
+    {
+      provider: "deepseek",
+      displayName: "DeepSeek",
+      profileProviderIds: ["deepseek"],
+      profileCredentialTypes: ["oauth", "token", "api_key"],
+    },
+    {
+      provider: "openrouter",
+      displayName: "OpenRouter",
+      profileProviderIds: ["openrouter"],
+      profileCredentialTypes: ["oauth", "token"],
+    },
+  ],
+  resolveProviderUsageSnapshotWithPlugin: async () => null,
+}));
+
 vi.mock("./provider-usage.profile.js", () => ({
   readProviderUsageProfile: (...args: unknown[]) => readProviderUsageProfileMock(...args),
 }));
@@ -71,7 +95,7 @@ describe("provider usage profile discovery", () => {
 
   it("returns every eligible ordered profile and normalizes usage-owner aliases", async () => {
     const result = await loadProviderUsageSummary({
-      providers: ["openai", "anthropic"],
+      providers: ["openai", "anthropic", "claude-cli"],
       config: {},
       fetch: vi.fn(),
     });
@@ -92,7 +116,7 @@ describe("provider usage profile discovery", () => {
     );
     expect(externalCliDiscoveryForProvidersMock).toHaveBeenCalledWith({
       cfg: {},
-      providers: ["openai", "anthropic"],
+      providers: ["openai", "anthropic", "claude-cli"],
       allowKeychainPrompt: false,
     });
     expect(ensureAuthProfileStoreMock).toHaveBeenCalledWith(

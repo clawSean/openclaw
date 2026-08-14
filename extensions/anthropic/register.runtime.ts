@@ -1181,6 +1181,7 @@ export function buildAnthropicProvider(): ProviderPlugin {
     wrapStreamFn: wrapAnthropicProviderStream,
     resolveUsageAuth: resolveAnthropicUsageAuth,
     fetchUsageSnapshot: fetchAnthropicUsage,
+    usageProfilePolicy: { providerIds: ["claude-cli"] },
     isCacheTtlEligible: () => true,
     buildAuthDoctorHint: (ctx) =>
       buildAnthropicAuthDoctorHint({

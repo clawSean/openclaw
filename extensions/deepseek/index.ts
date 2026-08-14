@@ -47,6 +47,7 @@ export default defineSingleProviderPluginEntry({
       });
       return apiKey ? { token: apiKey } : null;
     },
+    usageProfilePolicy: { credentialTypes: ["oauth", "token", "api_key"] },
     fetchUsageSnapshot: async (ctx) =>
       await fetchDeepSeekUsage(ctx.token, ctx.timeoutMs, ctx.fetchFn),
   },
