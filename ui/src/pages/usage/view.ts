@@ -142,33 +142,103 @@ function renderUsageEmptyState(onRefresh: () => void) {
 }
 
 type ProviderUsageSnapshot = ProviderUsageSummary["providers"][number];
+type ProviderUsageProfileSnapshot = NonNullable<ProviderUsageSummary["profiles"]>[number];
 
-function renderProviderUsage(providers: ProviderUsageSnapshot[]) {
-  if (providers.length === 0) {
+type ProviderUsageGroup = {
+  id: string;
+  displayName: string;
+  provider?: ProviderUsageSnapshot;
+  profiles: ProviderUsageProfileSnapshot[];
+};
+
+function groupProviderUsage(
+  providers: ProviderUsageSnapshot[],
+  profiles: ProviderUsageProfileSnapshot[],
+): ProviderUsageGroup[] {
+  const groups = new Map<string, ProviderUsageGroup>();
+  for (const provider of providers) {
+    groups.set(provider.provider, {
+      id: provider.provider,
+      displayName: provider.displayName,
+      provider,
+      profiles: [],
+    });
+  }
+  for (const profile of profiles) {
+    const group = groups.get(profile.provider) ?? {
+      id: profile.provider,
+      displayName: profile.displayName,
+      profiles: [],
+    };
+    group.profiles.push(profile);
+    groups.set(profile.provider, group);
+  }
+  const sortedGroups = [...groups.values()];
+  for (const group of sortedGroups) {
+    group.profiles = group.profiles.toSorted((a, b) =>
+      a.authProfileId.localeCompare(b.authProfileId),
+    );
+  }
+  return sortedGroups.toSorted((a, b) => a.displayName.localeCompare(b.displayName));
+}
+
+function renderProviderUsage(
+  providers: ProviderUsageSnapshot[],
+  profiles: ProviderUsageProfileSnapshot[],
+) {
+  const groups = groupProviderUsage(providers, profiles);
+  if (groups.length === 0) {
     return nothing;
   }
   return renderSettingsSection(
     {
       title: t("usage.providerUsage.title"),
-      count: providers.length,
+      count: groups.length,
       description: t("usage.providerUsage.subtitle"),
     },
     html`
       <div class="usage-panel provider-usage-section">
         <div class="provider-usage-grid">
-          ${providers.map(
-            (provider) => html`
-              <article class="provider-usage-card">
+          ${groups.map(
+            (group) => html`
+              <article class="provider-usage-card" data-provider-id=${group.id}>
                 <div class="provider-usage-card__header">
                   <div>
-                    <div class="provider-usage-card__name">${provider.displayName}</div>
-                    <div class="provider-usage-card__id">${provider.provider}</div>
+                    <div class="provider-usage-card__name">${group.displayName}</div>
+                    <div class="provider-usage-card__id">${group.id}</div>
                   </div>
-                  ${provider.plan
-                    ? html`<span class="provider-usage-plan">${provider.plan}</span>`
+                  ${group.provider?.plan
+                    ? html`<span class="provider-usage-plan">${group.provider.plan}</span>`
                     : nothing}
                 </div>
-                ${renderProviderUsageDetails(provider)}
+                ${group.provider ? renderProviderUsageDetails(group.provider) : nothing}
+                ${group.profiles.length > 0
+                  ? html`
+                      <div class="provider-usage-profiles">
+                        <div class="provider-usage-profiles__title">
+                          ${t("usage.providerUsage.profileUsage")}
+                        </div>
+                        ${group.profiles.map(
+                          (profile) => html`
+                            <section
+                              class="provider-usage-profile"
+                              data-auth-profile-id=${profile.authProfileId}
+                            >
+                              <div class="provider-usage-card__header">
+                                <div class="provider-usage-card__name">
+                                  ${profile.authProfileId}
+                                </div>
+                                ${profile.plan
+                                  ? html`<span class="provider-usage-plan">${profile.plan}</span>`
+                                  : nothing}
+                              </div>
+                              ${renderProviderUsageDetails(profile)}
+                            </section>
+                          `,
+                        )}
+                      </div>
+                    `
+                  : nothing}
               </article>
             `,
           )}
@@ -798,7 +868,7 @@ export function renderUsage(props: UsageProps) {
           </div>
         </section>
 
-        ${renderProviderUsage(data.providerUsage)}
+        ${renderProviderUsage(data.providerUsage, data.providerUsageProfiles)}
         ${isEmpty
           ? renderUsageEmptyState(filterActions.onRefresh)
           : html`

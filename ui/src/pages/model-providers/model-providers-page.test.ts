@@ -209,6 +209,55 @@ describe("ModelProvidersPage agent scope", () => {
     expect(link?.href).toBe("https://docs.openclaw.ai/concepts/model-providers");
   });
 
+  it("renders two exact-profile quota rows on one provider card", async () => {
+    const { context, snapshot } = createHarness("main");
+    const page = document.createElement(
+      "openclaw-model-providers-page",
+    ) as ModelProvidersPageTestElement;
+    page.context = context;
+    page.routeData = {
+      data: {
+        ...EMPTY_MODEL_PROVIDERS_DATA,
+        config: {},
+        providerUsage: {
+          updatedAt: 1,
+          providers: [],
+          profiles: [
+            {
+              provider: "openai",
+              authProfileId: "openai:personal",
+              capturedAt: 1,
+              displayName: "OpenAI",
+              windows: [{ label: "7d", usedPercent: 10 }],
+            },
+            {
+              provider: "openai",
+              authProfileId: "openai:work",
+              capturedAt: 1,
+              displayName: "OpenAI",
+              windows: [{ label: "7d", usedPercent: 60 }],
+            },
+          ],
+        },
+        updatedAt: 1,
+      },
+      client: snapshot.client,
+      agentId: "main",
+    };
+    document.body.append(page);
+
+    await vi.waitFor(() =>
+      expect(
+        page.querySelectorAll('[data-provider-id="openai"] [data-auth-profile-id]'),
+      ).toHaveLength(2),
+    );
+    const profiles = page.querySelectorAll("[data-auth-profile-id]");
+    expect(profiles[0]?.textContent).toContain("openai:personal");
+    expect(profiles[0]?.textContent).toContain("90% left");
+    expect(profiles[1]?.textContent).toContain("openai:work");
+    expect(profiles[1]?.textContent).toContain("40% left");
+  });
+
   it("patches thinking and fast mode through the shared config draft", async () => {
     const { context, runtimeConfig } = createHarness("main");
     const page = appendPage(context);

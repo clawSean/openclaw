@@ -1,4 +1,4 @@
-import type { UsageSummary as SharedProviderUsageSummary } from "../../../../src/infra/provider-usage.types.js";
+import type { ProviderUsageSummary as SharedProviderUsageSummary } from "../../../../src/infra/provider-usage.profile.types.js";
 // Control UI module implements usage types behavior.
 import type {
   SessionUsageTimePoint as SharedSessionUsageTimePoint,

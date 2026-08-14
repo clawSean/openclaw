@@ -1,12 +1,13 @@
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { asNullableRecord as asRecord } from "@openclaw/normalization-core/record-coerce";
-import { resolveUsageProviderId } from "../../../../src/infra/provider-usage.shared.js";
 // Merges gateway provider signals (auth status, live usage/quota, local session
 // cost) into one card list for the Models settings page.
 import type {
-  ProviderUsageSnapshot,
-  UsageSummary,
-} from "../../../../src/infra/provider-usage.types.js";
+  ProviderUsageProfileSnapshot,
+  ProviderUsageSummary,
+} from "../../../../src/infra/provider-usage.profile.types.js";
+import { resolveUsageProviderId } from "../../../../src/infra/provider-usage.shared.js";
+import type { ProviderUsageSnapshot } from "../../../../src/infra/provider-usage.types.js";
 import type { SessionModelUsage } from "../../../../src/infra/session-cost-usage.types.js";
 import type {
   ModelAuthStatusProvider,
@@ -57,6 +58,8 @@ export type ModelProviderCard = {
   catalogStatus?: ModelCatalogProviderOutcome["status"];
   /** Live provider-reported usage (quota windows, billing, cost history). */
   usage?: ProviderUsageSnapshot;
+  /** Exact-profile quota snapshots keyed by auth-profile id. */
+  profileUsage: ProviderUsageProfileSnapshot[];
   /** Locally-computed session spend for the requested window. */
   localCost?: ModelProviderLocalCost;
 };
@@ -68,7 +71,7 @@ type ModelProviderCardsInput = {
   configProviderIds?: string[] | null;
   configApiKeyProviderIds?: string[] | null;
   configProviderAuthModes?: Record<string, string> | null;
-  providerUsage: UsageSummary | null;
+  providerUsage: ProviderUsageSummary | null;
   costByProvider: SessionModelUsage[] | null;
 };
 
@@ -143,6 +146,7 @@ function ensureDraft(drafts: CardDraft[], id: string, displayName: string): Card
       id,
       displayName,
       profiles: [],
+      profileUsage: [],
       credentialProviderIds: [],
       logoutTargets: [],
       hasConfigApiKey: false,
@@ -317,6 +321,21 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
     draft.hasUsageSnapshot = true;
   }
 
+  for (const snapshot of input.providerUsage?.profiles ?? []) {
+    const id = canonicalProviderId(snapshot.provider);
+    if (!id) {
+      continue;
+    }
+    const draft =
+      findDraft(drafts, [id]) ??
+      ensureDraft(drafts, id, snapshot.displayName || providerDisplayLabel(id));
+    draft.ids.add(id);
+    if (!draft.card.profileUsage.some((entry) => entry.authProfileId === snapshot.authProfileId)) {
+      draft.card.profileUsage.push(snapshot);
+    }
+    draft.hasUsageSnapshot = true;
+  }
+
   for (const entry of input.costByProvider ?? []) {
     const id = canonicalProviderId(entry.provider ?? "");
     if (!id) {
@@ -354,6 +373,11 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
       return Object.assign(
         {},
         draft.card,
+        {
+          profileUsage: draft.card.profileUsage.toSorted((a, b) =>
+            a.authProfileId.localeCompare(b.authProfileId),
+          ),
+        },
         apiKeySupported === undefined ? {} : { apiKeySupported },
       );
     })

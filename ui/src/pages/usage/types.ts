@@ -48,6 +48,7 @@ type UsageDataState = {
   costDaily: CostDailyEntry[];
   cacheStatus: SessionsUsageResult["cacheStatus"];
   providerUsage: ProviderUsageSummary["providers"];
+  providerUsageProfiles: NonNullable<ProviderUsageSummary["profiles"]>;
 };
 
 export type UsageFilterState = {

@@ -53,6 +53,15 @@
   letter-spacing: 0.04em;
 }
 
+.model-providers__profile-usage {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.model-providers__profile-usage-card {
+  padding: var(--space-3);
+}
+
 .model-providers__fallbacks,
 .model-providers__inline-form,
 .model-providers__probe {

@@ -1,7 +1,7 @@
 // Fetches the gateway signals behind the Models settings page.
 // Each source degrades independently: a missing usage hook or an older
 // gateway must not blank the provider list.
-import type { UsageSummary } from "../../../../src/infra/provider-usage.types.js";
+import type { ProviderUsageSummary } from "../../../../src/infra/provider-usage.profile.types.js";
 import type { SessionModelUsage } from "../../../../src/infra/session-cost-usage.types.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type {
@@ -28,7 +28,7 @@ export type ModelProvidersData = {
   providerOutcomes: ModelCatalogProviderOutcome[];
   catalogError: string | null;
   config: Record<string, unknown> | null;
-  providerUsage: UsageSummary | null;
+  providerUsage: ProviderUsageSummary | null;
   costByProvider: SessionModelUsage[] | null;
   updatedAt: number | null;
   error: string | null;
@@ -107,7 +107,7 @@ export async function loadModelProvidersData(
       request<ConfigSnapshot>("config.get", {})
         .then((snapshot) => resolveEditableSnapshotConfig(snapshot))
         .catch(() => null),
-      request<UsageSummary>("usage.status").catch(() => null),
+      request<ProviderUsageSummary>("usage.status").catch(() => null),
       requestSessionUsage(client, {
         startDate: localDate(MODEL_PROVIDERS_COST_DAYS - 1),
         endDate: localDate(0),

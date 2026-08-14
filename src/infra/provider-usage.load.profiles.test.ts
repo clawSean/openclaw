@@ -1,11 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const readProviderUsageProfileMock = vi.fn();
+const ensureAuthProfileStoreMock = vi.fn();
+const externalCliDiscoveryForProvidersMock = vi.fn(
+  ({ cfg, providers }: { cfg: unknown; providers: Iterable<string> }) => ({
+    mode: "scoped" as const,
+    allowKeychainPrompt: false as const,
+    config: cfg,
+    providerIds: providers,
+  }),
+);
 
 const store = {
   profiles: {
     "openai:personal": { type: "oauth", provider: "openai" },
     "openai:work": { type: "oauth", provider: "openai" },
+    "openai:external": { type: "oauth", provider: "openai" },
     "openai:excluded": { type: "oauth", provider: "openai" },
     "claude-cli:default": { type: "oauth", provider: "claude-cli" },
     "anthropic:api": { type: "api_key", provider: "anthropic" },
@@ -16,10 +26,12 @@ const store = {
 
 vi.mock("../agents/auth-profiles.js", () => ({
   dedupeProfileIds: (ids: string[]) => [...new Set(ids)],
-  ensureAuthProfileStoreWithoutExternalProfiles: () => store,
+  ensureAuthProfileStore: (...args: unknown[]) => ensureAuthProfileStoreMock(...args),
+  externalCliDiscoveryForProviders: (params: { cfg: unknown; providers: Iterable<string> }) =>
+    externalCliDiscoveryForProvidersMock(params),
   resolveAuthProfileOrder: ({ provider }: { provider: string }) =>
     provider === "openai"
-      ? ["openai:personal", "openai:work"]
+      ? ["openai:personal", "openai:work", "openai:external"]
       : provider === "claude-cli"
         ? ["claude-cli:default"]
         : provider === "anthropic"
@@ -43,6 +55,8 @@ import { loadProviderUsageSummary } from "./provider-usage.load.js";
 
 describe("provider usage profile discovery", () => {
   beforeEach(() => {
+    ensureAuthProfileStoreMock.mockReset().mockReturnValue(store);
+    externalCliDiscoveryForProvidersMock.mockClear();
     readProviderUsageProfileMock.mockReset();
     readProviderUsageProfileMock.mockImplementation(
       async ({ providerId, authProfileId }: { providerId: string; authProfileId: string }) => ({
@@ -65,14 +79,30 @@ describe("provider usage profile discovery", () => {
     expect(readProviderUsageProfileMock.mock.calls.map(([request]) => request)).toEqual([
       expect.objectContaining({ providerId: "openai", authProfileId: "openai:personal" }),
       expect.objectContaining({ providerId: "openai", authProfileId: "openai:work" }),
+      expect.objectContaining({ providerId: "openai", authProfileId: "openai:external" }),
       expect.objectContaining({ providerId: "anthropic", authProfileId: "claude-cli:default" }),
     ]);
     expect(result.profiles).toEqual(
       [
         { provider: "openai", authProfileId: "openai:personal" },
         { provider: "openai", authProfileId: "openai:work" },
+        { provider: "openai", authProfileId: "openai:external" },
         { provider: "anthropic", authProfileId: "claude-cli:default" },
       ].map((profile) => expect.objectContaining(profile)),
+    );
+    expect(externalCliDiscoveryForProvidersMock).toHaveBeenCalledWith({
+      cfg: {},
+      providers: ["openai", "anthropic"],
+      allowKeychainPrompt: false,
+    });
+    expect(ensureAuthProfileStoreMock).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({
+        allowKeychainPrompt: false,
+        readOnly: true,
+        syncExternalCli: false,
+        externalCli: expect.objectContaining({ mode: "scoped" }),
+      }),
     );
   });
 

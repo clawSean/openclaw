@@ -239,6 +239,38 @@ function renderLocalCost(card: ModelProviderCard, costDays: number) {
   `;
 }
 
+function renderProfileUsage(card: ModelProviderCard) {
+  if (card.profileUsage.length === 0) {
+    return nothing;
+  }
+  return html`
+    <div class="model-providers__profile-usage">
+      <div class="model-providers__global-metrics-title">
+        ${t("usage.providerUsage.profileUsage")}
+      </div>
+      ${card.profileUsage.map(
+        (profile) => html`
+          <article
+            class="provider-usage-card model-providers__profile-usage-card"
+            data-auth-profile-id=${profile.authProfileId}
+          >
+            <div class="provider-usage-card__header">
+              <div>
+                <div class="provider-usage-card__name">${profile.authProfileId}</div>
+                <div class="provider-usage-card__id">${profile.provider}</div>
+              </div>
+              ${profile.plan
+                ? html`<span class="provider-usage-plan">${profile.plan}</span>`
+                : nothing}
+            </div>
+            ${renderProviderUsageDetails(profile)}
+          </article>
+        `,
+      )}
+    </div>
+  `;
+}
+
 function renderCredentialSummary(card: ModelProviderCard, agentLabel: string) {
   const oauthCount = card.profiles.filter((profile) => profile.type === "oauth").length;
   const tokenCount = card.profiles.filter((profile) => profile.type === "token").length;
@@ -472,11 +504,14 @@ function renderProviderRow(card: ModelProviderCard, props: ModelProvidersViewPro
         <div class="model-providers__global-metrics-title">${t("modelProviders.globalUsage")}</div>
         ${card.usage
           ? renderProviderUsageDetails(card.usage)
-          : html`<div class="model-providers__no-stats">${t("modelProviders.noStats")}</div>`}
+          : card.profileUsage.length === 0
+            ? html`<div class="model-providers__no-stats">${t("modelProviders.noStats")}</div>`
+            : nothing}
         ${renderLocalCost(card, props.costDays)}
       </div>
-      ${renderProviderActions(card, props)} ${renderKeyEditor(card, props)}
-      ${renderProbeResult(props.probeResults[card.id])} ${renderMutationMessage(message)}
+      ${renderProfileUsage(card)} ${renderProviderActions(card, props)}
+      ${renderKeyEditor(card, props)} ${renderProbeResult(props.probeResults[card.id])}
+      ${renderMutationMessage(message)}
     </div>
   `;
 }

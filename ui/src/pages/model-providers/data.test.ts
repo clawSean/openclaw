@@ -219,6 +219,38 @@ describe("buildModelProviderCards", () => {
     expect(firstCard(cards).usage?.costHistory?.periodDays).toBe(30);
   });
 
+  it("attaches exact-profile quota snapshots to their canonical provider card", () => {
+    const cards = buildModelProviderCards({
+      ...EMPTY_INPUT,
+      providerUsage: {
+        updatedAt: 2,
+        providers: [],
+        profiles: [
+          {
+            provider: "openai",
+            authProfileId: "openai:personal",
+            capturedAt: 1,
+            displayName: "OpenAI",
+            windows: [{ label: "7d", usedPercent: 10 }],
+          },
+          {
+            provider: "openai",
+            authProfileId: "openai:work",
+            capturedAt: 1,
+            displayName: "OpenAI",
+            windows: [{ label: "7d", usedPercent: 60 }],
+          },
+        ],
+      },
+    });
+
+    expect(cards).toHaveLength(1);
+    expect(firstCard(cards).profileUsage).toEqual([
+      expect.objectContaining({ authProfileId: "openai:personal" }),
+      expect.objectContaining({ authProfileId: "openai:work" }),
+    ]);
+  });
+
   it("attaches local session spend via alias ids and includes cost-only providers", () => {
     const totals = {
       input: 100,

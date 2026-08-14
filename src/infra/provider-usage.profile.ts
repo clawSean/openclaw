@@ -15,7 +15,7 @@ import type {
 import {
   PROVIDER_USAGE_TIMEOUT_MS,
   raceUsageTimeout,
-  resolveProviderUsageDisplayName,
+  providerUsageDisplayNameForId,
   resolveUsageProviderId,
 } from "./provider-usage.shared.js";
 import type {
@@ -203,7 +203,7 @@ export async function readProviderUsageProfile(
 
   const failureSnapshot = (error: string): ProviderUsageSnapshot => ({
     provider,
-    displayName: resolveProviderUsageDisplayName(provider),
+    displayName: providerUsageDisplayNameForId(provider),
     windows: [],
     error,
   });

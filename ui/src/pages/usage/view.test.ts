@@ -63,6 +63,7 @@ function createUsageProps(overrides: Partial<UsageProps> = {}): UsageProps {
       costDaily: [],
       cacheStatus: undefined,
       providerUsage: [],
+      providerUsageProfiles: [],
     },
     filters: {
       startDate: "2026-05-14",
@@ -410,6 +411,52 @@ describe("renderUsage", () => {
     expect(card?.textContent).toContain("75% left");
     expect(card?.textContent).toContain("$64.50");
     expect(card?.textContent).toContain("$5.00 / $20.00");
+  });
+
+  it("renders two auth-profile quota rows under one provider", () => {
+    const container = document.createElement("div");
+
+    render(
+      renderUsage(
+        createUsageProps({
+          data: {
+            ...createUsageProps().data,
+            providerUsage: [
+              {
+                provider: "openai",
+                displayName: "OpenAI",
+                windows: [],
+              },
+            ],
+            providerUsageProfiles: [
+              {
+                provider: "openai",
+                authProfileId: "openai:personal",
+                capturedAt: 1,
+                displayName: "OpenAI",
+                windows: [{ label: "7d", usedPercent: 10 }],
+              },
+              {
+                provider: "openai",
+                authProfileId: "openai:work",
+                capturedAt: 1,
+                displayName: "OpenAI",
+                windows: [{ label: "7d", usedPercent: 60 }],
+              },
+            ],
+          },
+        }),
+      ),
+      container,
+    );
+
+    const provider = container.querySelector('[data-provider-id="openai"]');
+    const profiles = provider?.querySelectorAll("[data-auth-profile-id]");
+    expect(profiles).toHaveLength(2);
+    expect(profiles?.[0]?.textContent).toContain("openai:personal");
+    expect(profiles?.[0]?.textContent).toContain("90% left");
+    expect(profiles?.[1]?.textContent).toContain("openai:work");
+    expect(profiles?.[1]?.textContent).toContain("40% left");
   });
 
   it("renders provider-reported cost history and attribution", () => {

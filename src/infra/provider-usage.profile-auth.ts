@@ -1,5 +1,6 @@
 import {
-  ensureAuthProfileStoreWithoutExternalProfiles,
+  ensureAuthProfileStore,
+  externalCliDiscoveryForProviderAuth,
   resolveApiKeyForProfile,
 } from "../agents/auth-profiles.js";
 import { hasUsableOAuthCredential } from "../agents/auth-profiles/credential-state.js";
@@ -19,7 +20,7 @@ type ProviderUsageProfileAuth = {
   email?: string;
 };
 
-/** Resolve exactly one stored profile without external overlay, fallback, or OAuth refresh. */
+/** Resolve exactly one effective profile without fallback or OAuth refresh. */
 export async function resolveProviderUsageProfileAuth(params: {
   provider: UsageProviderId;
   authProfileId: string;
@@ -33,8 +34,14 @@ export async function resolveProviderUsageProfileAuth(params: {
   }
 
   const cfg = params.config ?? getRuntimeConfig();
-  const store = ensureAuthProfileStoreWithoutExternalProfiles(params.agentDir, {
+  const store = ensureAuthProfileStore(params.agentDir, {
     allowKeychainPrompt: false,
+    externalCli: externalCliDiscoveryForProviderAuth({
+      cfg,
+      provider,
+      profileId: authProfileId,
+      allowKeychainPrompt: false,
+    }),
     readOnly: true,
     syncExternalCli: false,
   });

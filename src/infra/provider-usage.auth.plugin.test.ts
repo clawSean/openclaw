@@ -8,10 +8,10 @@ const resolveProviderUsageAuthWithPluginMock = vi.fn(
   async (..._args: unknown[]): Promise<unknown> => null,
 );
 const hasAnyAuthProfileStoreSourceMock = vi.fn(() => false);
-const ensureAuthProfileStoreMock = vi.fn(() => ({
+const ensureAuthProfileStoreMock = vi.fn((..._args: unknown[]) => ({
   profiles: {},
 }));
-const ensureAuthProfileStoreWithoutExternalProfilesMock = vi.fn(() => ({
+const ensureAuthProfileStoreWithoutExternalProfilesMock = vi.fn((..._args: unknown[]) => ({
   profiles: {},
 }));
 const resolveAuthProfileOrderMock = vi.fn((_params: unknown): string[] => []);
@@ -21,9 +21,21 @@ const resolveApiKeyForProfileMock = vi.fn(
 
 vi.mock("../agents/auth-profiles.js", () => ({
   dedupeProfileIds: (profileIds: string[]) => [...new Set(profileIds)],
-  ensureAuthProfileStore: () => ensureAuthProfileStoreMock(),
-  ensureAuthProfileStoreWithoutExternalProfiles: () =>
-    ensureAuthProfileStoreWithoutExternalProfilesMock(),
+  ensureAuthProfileStore: (...args: unknown[]) => ensureAuthProfileStoreMock(...args),
+  ensureAuthProfileStoreWithoutExternalProfiles: (...args: unknown[]) =>
+    ensureAuthProfileStoreWithoutExternalProfilesMock(...args),
+  externalCliDiscoveryForProviderAuth: (params: {
+    cfg?: unknown;
+    provider: string;
+    profileId?: string;
+    allowKeychainPrompt?: boolean;
+  }) => ({
+    mode: "scoped" as const,
+    allowKeychainPrompt: params.allowKeychainPrompt,
+    config: params.cfg,
+    providerIds: [params.provider],
+    profileIds: params.profileId ? [params.profileId] : [],
+  }),
   hasAnyAuthProfileStoreSource: () => hasAnyAuthProfileStoreSourceMock(),
   listProfilesForProvider: () => [],
   resolveApiKeyForProfile: (...args: unknown[]) => resolveApiKeyForProfileMock(...args),
@@ -412,7 +424,7 @@ describe("resolveProviderAuths plugin boundary", () => {
     expect(resolveProviderUsageAuthWithPluginMock).not.toHaveBeenCalled();
   });
 
-  it("resolves only the requested profile without refresh or external overlays", async () => {
+  it("resolves a requested runtime external profile through a scoped read-only overlay", async () => {
     const store = {
       version: 1,
       profiles: {
@@ -428,7 +440,7 @@ describe("resolveProviderAuths plugin boundary", () => {
         },
       },
     };
-    ensureAuthProfileStoreWithoutExternalProfilesMock.mockReturnValue(store);
+    ensureAuthProfileStoreMock.mockReturnValue(store);
     resolveApiKeyForProfileMock.mockResolvedValueOnce({
       apiKey: "materialized-zai-key",
       provider: "zai",
@@ -447,8 +459,22 @@ describe("resolveProviderAuths plugin boundary", () => {
       credentialType: "api_key",
     });
 
-    expect(ensureAuthProfileStoreWithoutExternalProfilesMock).toHaveBeenCalledTimes(1);
-    expect(ensureAuthProfileStoreMock).not.toHaveBeenCalled();
+    expect(ensureAuthProfileStoreMock).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({
+        allowKeychainPrompt: false,
+        readOnly: true,
+        syncExternalCli: false,
+        externalCli: {
+          mode: "scoped",
+          allowKeychainPrompt: false,
+          config: {},
+          providerIds: ["zai"],
+          profileIds: ["zai:work"],
+        },
+      }),
+    );
+    expect(ensureAuthProfileStoreWithoutExternalProfilesMock).not.toHaveBeenCalled();
     expect(resolveApiKeyForProfileMock).toHaveBeenCalledWith(
       expect.objectContaining({
         store,
@@ -467,7 +493,7 @@ describe("resolveProviderAuths plugin boundary", () => {
     "accepts $storedProvider exact profiles for canonical $requestedProvider usage",
     async ({ storedProvider, requestedProvider }) => {
       const profileId = `${storedProvider}:work`;
-      ensureAuthProfileStoreWithoutExternalProfilesMock.mockReturnValue({
+      ensureAuthProfileStoreMock.mockReturnValue({
         profiles: {
           [profileId]: {
             type: "oauth",
@@ -502,7 +528,7 @@ describe("resolveProviderAuths plugin boundary", () => {
   );
 
   it("fails closed when the requested profile belongs to another provider", async () => {
-    ensureAuthProfileStoreWithoutExternalProfilesMock.mockReturnValue({
+    ensureAuthProfileStoreMock.mockReturnValue({
       profiles: {
         "shared:profile": {
           type: "oauth",
@@ -526,7 +552,7 @@ describe("resolveProviderAuths plugin boundary", () => {
   });
 
   it("does not fall back when the requested profile is missing", async () => {
-    ensureAuthProfileStoreWithoutExternalProfilesMock.mockReturnValue({
+    ensureAuthProfileStoreMock.mockReturnValue({
       profiles: {
         "zai:fallback": {
           type: "api_key",
@@ -548,7 +574,7 @@ describe("resolveProviderAuths plugin boundary", () => {
   });
 
   it("rejects expiring OAuth before the existing resolver can refresh or fall back", async () => {
-    ensureAuthProfileStoreWithoutExternalProfilesMock.mockReturnValue({
+    ensureAuthProfileStoreMock.mockReturnValue({
       profiles: {
         "openai:expiring": {
           type: "oauth",

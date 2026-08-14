@@ -502,6 +502,7 @@ class UsagePage extends OpenClawLightDomElement {
           this.usageCostSummary?.cacheStatus,
         ),
         providerUsage: this.providerUsageSummary?.providers ?? [],
+        providerUsageProfiles: this.providerUsageSummary?.profiles ?? [],
       },
       filters: {
         startDate: this.usageStartDate,

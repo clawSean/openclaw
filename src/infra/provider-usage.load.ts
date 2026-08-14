@@ -2,7 +2,8 @@
 import pLimit from "p-limit";
 import {
   dedupeProfileIds,
-  ensureAuthProfileStoreWithoutExternalProfiles,
+  ensureAuthProfileStore,
+  externalCliDiscoveryForProviders,
   resolveAuthProfileOrder,
 } from "../agents/auth-profiles.js";
 import { getRuntimeConfig, type OpenClawConfig } from "../config/config.js";
@@ -25,7 +26,7 @@ import {
   isProviderUsageProfileEligible,
   providerUsageLabel,
   raceUsageTimeout,
-  resolveProviderUsageDisplayName,
+  providerUsageDisplayNameForId,
   resolveUsageProviderId,
 } from "./provider-usage.shared.js";
 import type { ProviderUsageSnapshot, UsageProviderId } from "./provider-usage.types.js";
@@ -68,8 +69,13 @@ function resolveUsageProfileRefs(params: {
   config: OpenClawConfig;
 }): Array<{ provider: UsageProviderId; authProfileId: string }> {
   const providerSet = new Set(params.providers);
-  const store = ensureAuthProfileStoreWithoutExternalProfiles(params.agentDir, {
+  const store = ensureAuthProfileStore(params.agentDir, {
     allowKeychainPrompt: false,
+    externalCli: externalCliDiscoveryForProviders({
+      cfg: params.config,
+      providers: params.providers,
+      allowKeychainPrompt: false,
+    }),
     readOnly: true,
     syncExternalCli: false,
   });
@@ -148,7 +154,7 @@ async function loadProfileUsageSnapshots(params: {
             provider,
             authProfileId,
             capturedAt: Date.now(),
-            displayName: resolveProviderUsageDisplayName(provider),
+            displayName: providerUsageDisplayNameForId(provider),
             windows: [],
             error: error instanceof Error ? error.message : String(error),
           };

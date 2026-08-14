@@ -27,7 +27,7 @@ export function providerUsageLabel(provider: string): string | undefined {
   return labels[provider];
 }
 
-export function resolveProviderUsageDisplayName(provider: string): string {
+export function providerUsageDisplayNameForId(provider: string): string {
   return providerUsageLabel(provider) ?? provider;
 }
 
