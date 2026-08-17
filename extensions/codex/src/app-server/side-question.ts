@@ -124,6 +124,12 @@ import {
   resolveCodexBindingModelProviderFallback,
   resolveReasoningEffort,
 } from "./thread-lifecycle.js";
+import {
+  attestCodexRestrictedToolSurfaceMcpServersDisabled,
+  assertCodexManagedRequirementsDoNotOverrideToolPolicy,
+  buildCodexRestrictedToolThreadConfigPatch,
+  readCodexInheritedMcpServerNames,
+} from "./thread-requests.js";
 import { filterCodexVisionTools } from "./vision-tools.js";
 import {
   resolveCodexWebSearchPlan,
@@ -318,11 +324,6 @@ export async function runCodexAppServerSideQuestion(
   if (nativeExecutionBlock) {
     throw new Error(nativeExecutionBlock);
   }
-  if (!nativeToolSurfaceEnabled) {
-    throw new Error(
-      "Codex-native /btw side-question mode is unavailable because the effective tool policy restricts Codex native tools for this session.",
-    );
-  }
   const clientOptions = {
     startOptions: appServer.start,
     timeoutMs: appServer.requestTimeoutMs,
@@ -469,6 +470,18 @@ export async function runCodexAppServerSideQuestion(
             signal: runAbortController.signal,
           })
         : "unsupported";
+    const restrictedToolThreadConfig = !nativeToolSurfaceEnabled
+      ? buildCodexRestrictedToolThreadConfigPatch(
+          await readCodexInheritedMcpServerNames(client, cwd, runAbortController.signal),
+        )
+      : undefined;
+    if (!nativeToolSurfaceEnabled) {
+      await assertCodexManagedRequirementsDoNotOverrideToolPolicy(
+        client,
+        { restrictedToolSurface: true },
+        runAbortController.signal,
+      );
+    }
     const { toolBridge, webSearchPlan } = await createCodexSideToolBridge({
       params: effectiveParams,
       cwd,
@@ -498,6 +511,9 @@ export async function runCodexAppServerSideQuestion(
     const registerRequestHandler = (targetClient: CodexAppServerClient) =>
       targetClient.addRequestHandler(async (request) => {
         if (!childThreadId || !turnId) {
+          return undefined;
+        }
+        if (!nativeToolSurfaceEnabled) {
           return undefined;
         }
         if (request.method === "mcpServer/elicitation/request") {
@@ -605,53 +621,56 @@ export async function runCodexAppServerSideQuestion(
       configuredEvents: options.nativeHookRelay?.events,
       approvalPolicy,
     });
-    nativeHookRelay = options.nativeHookRelay
-      ? registerCodexSideNativeHookRelay({
-          options: options.nativeHookRelay,
-          events: nativeHookRelayEvents,
-          agentId: sessionAgentId,
-          sessionId: params.sessionId,
-          sessionKey: params.sessionKey,
-          config: params.cfg,
-          runId: sideRunParams.runId,
-          channelId: buildAgentHookContextChannelFields({
+    nativeHookRelay =
+      nativeToolSurfaceEnabled && options.nativeHookRelay
+        ? registerCodexSideNativeHookRelay({
+            options: options.nativeHookRelay,
+            events: nativeHookRelayEvents,
+            agentId: sessionAgentId,
+            sessionId: params.sessionId,
             sessionKey: params.sessionKey,
-            messageChannel: params.messageChannel,
-            messageProvider: params.messageProvider,
-            currentChannelId: params.currentChannelId,
-          }).channelId,
-          requestTimeoutMs: appServer.requestTimeoutMs,
-          completionTimeoutMs: Math.max(
-            appServer.turnCompletionIdleTimeoutMs,
-            SIDE_QUESTION_COMPLETION_TIMEOUT_MS,
-          ),
-          loopDetectionPreToolUseRelay: appServer.loopDetectionPreToolUseRelay,
-          signal: runAbortController.signal,
-          hostCapabilities: sideRunParams.hostCapabilities,
-          onPreToolUseFailure: (failure) => {
-            if (nativePreToolUseFailureFallbackActive) {
-              emitNativePreToolUseFailure(failure);
-            } else if (nativeToolLifecycleProjector) {
-              nativeToolLifecycleProjector.recordPreToolUseFailure(
-                failure,
-                nativeToolRunWasAbortedBeforeCleanup,
-              );
-            } else {
-              pendingNativePreToolUseFailures.push(failure);
-            }
-          },
-        })
-      : undefined;
-    const nativeHookRelayConfig = nativeHookRelay
-      ? buildCodexNativeHookRelayConfig({
-          relay: nativeHookRelay,
-          events: nativeHookRelayEvents,
-          hookTimeoutSec: options.nativeHookRelay?.hookTimeoutSec,
-          clearOmittedEvents: true,
-        })
-      : options.nativeHookRelay?.enabled === false
-        ? buildCodexNativeHookRelayDisabledConfig()
+            config: params.cfg,
+            runId: sideRunParams.runId,
+            channelId: buildAgentHookContextChannelFields({
+              sessionKey: params.sessionKey,
+              messageChannel: params.messageChannel,
+              messageProvider: params.messageProvider,
+              currentChannelId: params.currentChannelId,
+            }).channelId,
+            requestTimeoutMs: appServer.requestTimeoutMs,
+            completionTimeoutMs: Math.max(
+              appServer.turnCompletionIdleTimeoutMs,
+              SIDE_QUESTION_COMPLETION_TIMEOUT_MS,
+            ),
+            loopDetectionPreToolUseRelay: appServer.loopDetectionPreToolUseRelay,
+            signal: runAbortController.signal,
+            hostCapabilities: sideRunParams.hostCapabilities,
+            onPreToolUseFailure: (failure) => {
+              if (nativePreToolUseFailureFallbackActive) {
+                emitNativePreToolUseFailure(failure);
+              } else if (nativeToolLifecycleProjector) {
+                nativeToolLifecycleProjector.recordPreToolUseFailure(
+                  failure,
+                  nativeToolRunWasAbortedBeforeCleanup,
+                );
+              } else {
+                pendingNativePreToolUseFailures.push(failure);
+              }
+            },
+          })
         : undefined;
+    const nativeHookRelayConfig = !nativeToolSurfaceEnabled
+      ? buildCodexNativeHookRelayDisabledConfig()
+      : nativeHookRelay
+        ? buildCodexNativeHookRelayConfig({
+            relay: nativeHookRelay,
+            events: nativeHookRelayEvents,
+            hookTimeoutSec: options.nativeHookRelay?.hookTimeoutSec,
+            clearOmittedEvents: true,
+          })
+        : options.nativeHookRelay?.enabled === false
+          ? buildCodexNativeHookRelayDisabledConfig()
+          : undefined;
     const runtimeThreadConfig = buildCodexRuntimeThreadConfig(webSearchPlan.threadConfig, {
       nativeCodeModeEnabled: nativeToolSurfaceEnabled,
       nativeCodeModeOnlyEnabled: appServer.codeModeOnly,
@@ -665,6 +684,7 @@ export async function runCodexAppServerSideQuestion(
       mergeCodexThreadConfigs(
         nativeHookRelayConfig,
         runtimeThreadConfig,
+        restrictedToolThreadConfig,
         pluginAppsConfigPatch,
         modelScopedAppServer.networkProxy?.configPatch,
       ) ?? runtimeThreadConfig;
@@ -701,6 +721,14 @@ export async function runCodexAppServerSideQuestion(
       }),
     );
     childThreadId = forkResponse.thread.id;
+    if (!nativeToolSurfaceEnabled) {
+      await attestCodexRestrictedToolSurfaceMcpServersDisabled(
+        client,
+        childThreadId,
+        threadConfig,
+        runAbortController.signal,
+      );
+    }
     if (
       supervisionModelSelection &&
       (forkResponse.model !== supervisionModelSelection.model ||
@@ -1017,7 +1045,7 @@ async function createCodexSideToolBridge(input: {
     ({ id: input.params.model, provider: input.params.provider } as never);
   const messageToolProvider = resolveCodexMessageToolProvider(input.params);
   let tools: AnyAgentTool[] = [];
-  if (supportsModelTools(runtimeModel)) {
+  if (input.nativeToolSurfaceEnabled && supportsModelTools(runtimeModel)) {
     const createOpenClawCodingTools = (await import("openclaw/plugin-sdk/agent-harness"))
       .createOpenClawCodingTools;
     const sandboxSessionKey =

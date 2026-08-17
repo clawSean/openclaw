@@ -487,7 +487,7 @@ export function buildCodexRingZeroThreadConfigPatch(
   return buildCodexRestrictedToolThreadConfigPatch(inheritedMcpServerNames);
 }
 
-function buildCodexRestrictedToolThreadConfigPatch(
+export function buildCodexRestrictedToolThreadConfigPatch(
   inheritedMcpServerNames: readonly string[],
 ): JsonObject {
   // Restricted turns already send environments: [] and disable native code

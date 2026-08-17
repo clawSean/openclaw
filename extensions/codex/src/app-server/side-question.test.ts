@@ -1209,23 +1209,81 @@ describe("runCodexAppServerSideQuestion", () => {
   it.each([
     { name: "deny all", toolsAllow: [] },
     { name: "narrow allowlist", toolsAllow: ["message"] },
-  ])("rejects /btw before forking when effective toolsAllow is $name", async ({ toolsAllow }) => {
-    await expect(
-      runCodexAppServerSideQuestion(
-        sideParams({
-          messageChannel: "telegram",
-          messageProvider: "telegram",
-          senderId: "restricted-sender",
-          toolsAllow,
-        }),
-      ),
-    ).rejects.toThrow(
-      "Codex-native /btw side-question mode is unavailable because the effective tool policy restricts Codex native tools for this session.",
-    );
+  ])(
+    "forks a restricted side thread without OpenClaw or native tools for $name",
+    async ({ toolsAllow }) => {
+      const client = createFakeClient();
+      client.request.mockImplementation(async (method: string) => {
+        if (method === "config/read") {
+          return {
+            config: { mcp_servers: { inherited: { command: "unsafe" } } },
+            layers: [{ name: { type: "user" } }],
+          };
+        }
+        if (method === "configRequirements/read") {
+          return { requirements: null };
+        }
+        if (method === "thread/fork") {
+          return threadResult("side-thread");
+        }
+        if (method === "mcpServerStatus/list") {
+          return {
+            data: [{ name: "inherited", serverInfo: null, tools: {} }],
+            nextCursor: null,
+          };
+        }
+        if (method === "thread/inject_items") {
+          return {};
+        }
+        if (method === "turn/start") {
+          queueMicrotask(() => {
+            client.emit(agentDelta("side-thread", "turn-1", "Side answer."));
+            client.emit(turnCompleted("side-thread", "turn-1", "Side answer."));
+          });
+          return turnStartResult("turn-1");
+        }
+        if (method === "thread/unsubscribe" || method === "turn/interrupt") {
+          return {};
+        }
+        throw new Error(`unexpected request: ${method}`);
+      });
+      getSharedCodexAppServerClientMock.mockResolvedValue(client);
 
-    expect(getSharedCodexAppServerClientMock).not.toHaveBeenCalled();
-    expect(resolveCodexProviderWebSearchSupportForClientMock).not.toHaveBeenCalled();
-  });
+      await expect(
+        runCodexAppServerSideQuestion(
+          sideParams({
+            messageChannel: "telegram",
+            messageProvider: "telegram",
+            senderId: "restricted-sender",
+            toolsAllow,
+          }),
+          { nativeHookRelay: { enabled: true } },
+        ),
+      ).resolves.toEqual({ text: "Side answer." });
+
+      const forkParams = client.request.mock.calls.find(
+        ([method]) => method === "thread/fork",
+      )?.[1] as Record<string, unknown> | undefined;
+      expect(forkParams?.config).toMatchObject({
+        "features.code_mode": false,
+        "features.code_mode_only": false,
+        "features.hooks": false,
+        "features.shell_tool": false,
+        "features.standalone_web_search": false,
+        "features.unified_exec": false,
+        mcp_servers: { inherited: { enabled: false } },
+        web_search: "disabled",
+      });
+      expect(forkParams?.config).toMatchObject({
+        "hooks.PreToolUse": [],
+        "hooks.PostToolUse": [],
+        "hooks.PermissionRequest": [],
+        "hooks.Stop": [],
+      });
+      expect(createOpenClawCodingToolsMock).not.toHaveBeenCalled();
+      expect(resolveCodexProviderWebSearchSupportForClientMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("applies native search restrictions to side forks and suppresses managed search", async () => {
     const { forkConfig, result, toolResponse } = await runSideQuestionWithManagedWebSearchCall(
