@@ -709,6 +709,12 @@ describe("tool descriptions", () => {
     expect(processTool.description).toContain("completion without auto-wake");
     expect(processTool.description).toContain("write, send-keys, submit, paste, kill");
   });
+
+  it.runIf(!isWin)("reminds the model to quote shell metacharacters", () => {
+    expect(execTool.description).toContain(
+      "Quote arguments containing shell metacharacters, including URL query strings with `?` or `&`.",
+    );
+  });
 });
 
 beforeEach(() => {
