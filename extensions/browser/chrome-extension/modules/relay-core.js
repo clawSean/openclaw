@@ -1,27 +1,17 @@
 // Pure helpers for the OpenClaw extension: pairing-string parsing, reconnect
-// backoff, and Chrome tab-group color mapping. No chrome.* usage here so the
+// backoff, and relay tab normalization. No chrome.* usage here so the
 // repo's vitest suite can exercise the logic directly.
 
-/** Tab group shown to the user; membership == what the agent may touch. */
+/** Shared-tab label used in consent and error messages. */
 export const OPENCLAW_TAB_GROUP_TITLE = "OpenClaw";
 export const EXTENSION_RELAY_PROTOCOL = "openclaw-extension-relay";
+export const PINNED_RELAY_URL = "wss://replace-me.invalid/browser/extension";
 const EXTENSION_RELAY_TOKEN_PROTOCOL_PREFIX = "openclaw-extension-token.";
-
-const CHROME_GROUP_COLORS = {
-  grey: [128, 128, 128],
-  blue: [66, 133, 244],
-  red: [219, 68, 55],
-  yellow: [244, 180, 0],
-  green: [15, 157, 88],
-  pink: [233, 30, 99],
-  purple: [156, 39, 176],
-  cyan: [0, 188, 212],
-  orange: [255, 112, 32],
-};
 
 /**
  * Parse a pairing string printed by `openclaw browser extension pair`.
- * Shape: ws://127.0.0.1:<port>/extension#<token>
+ * This build accepts only the exact relay endpoint selected at build time.
+ * Shape: wss://your-gateway.example/browser/extension#<token>
  * Returns { relayUrl, token } or null when malformed.
  */
 export function parsePairingString(raw) {
@@ -32,7 +22,7 @@ export function parsePairingString(raw) {
   }
   const relayUrl = trimmed.slice(0, hashIndex);
   const token = trimmed.slice(hashIndex + 1).trim();
-  if (!token) {
+  if (!token || token.length > 512 || !/^[A-Za-z0-9._~-]+$/.test(token)) {
     return null;
   }
   let parsed;
@@ -41,13 +31,22 @@ export function parsePairingString(raw) {
   } catch {
     return null;
   }
-  if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
+  if (
+    parsed.protocol !== "wss:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.port ||
+    relayUrl !== PINNED_RELAY_URL ||
+    parsed.href !== PINNED_RELAY_URL
+  ) {
     return null;
   }
-  if (!parsed.pathname.endsWith("/extension")) {
-    return null;
-  }
-  return { relayUrl, token };
+  return { relayUrl: PINNED_RELAY_URL, token };
+}
+
+export function isPinnedRelayUrl(relayUrl) {
+  return relayUrl === PINNED_RELAY_URL;
 }
 
 /** Build WebSocket subprotocols without putting the relay secret in the request URL. */
@@ -59,28 +58,6 @@ export function buildRelayWsProtocols(token) {
 export function reconnectDelayMs(attempt) {
   const capped = Math.min(Math.max(0, attempt), 5);
   return Math.min(1000 * 2 ** capped, 30_000);
-}
-
-/** Map a hex color to the closest Chrome tab-group color name. */
-export function nearestGroupColor(hex) {
-  const match = /^#?([0-9a-f]{6})$/i.exec(String(hex ?? "").trim());
-  if (!match) {
-    return "orange";
-  }
-  const value = Number.parseInt(match[1], 16);
-  const r = (value >> 16) & 0xff;
-  const g = (value >> 8) & 0xff;
-  const b = value & 0xff;
-  let best = "orange";
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (const [name, [cr, cg, cb]] of Object.entries(CHROME_GROUP_COLORS)) {
-    const distance = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2;
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = name;
-    }
-  }
-  return best;
 }
 
 /** Normalize a chrome.tabs.Tab into the relay's tab info shape. */
