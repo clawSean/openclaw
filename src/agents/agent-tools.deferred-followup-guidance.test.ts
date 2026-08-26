@@ -2,6 +2,7 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it } from "vitest";
 import { getPluginToolMeta, setPluginToolMeta } from "../plugins/tools.js";
+import { withMockedPlatform } from "../test-utils/vitest-spies.js";
 import { applyToolAvailabilityDescriptions } from "./agent-tools.deferred-followup.js";
 import type { AnyAgentTool } from "./agent-tools.types.js";
 import { getChannelAgentToolMeta, setChannelAgentToolMeta } from "./channel-tool-metadata.js";
@@ -12,12 +13,18 @@ import {
 } from "./tool-description-presets.js";
 import { createConversationsSendTool } from "./tools/conversation-tools.js";
 
-function findToolDescription(toolName: string, schedulerToolName?: "automations" | "cron") {
-  const tools = applyToolAvailabilityDescriptions([
-    { name: "exec", description: "exec base" },
-    { name: "process", description: "process base" },
-    ...(schedulerToolName ? [{ name: schedulerToolName, description: "scheduler base" }] : []),
-  ] as AnyAgentTool[]);
+function findToolDescription(
+  toolName: string,
+  schedulerToolName?: "automations" | "cron",
+  hasProcessTool = true,
+) {
+  const tools = withMockedPlatform("linux", () =>
+    applyToolAvailabilityDescriptions([
+      { name: "exec", description: "exec base" },
+      ...(hasProcessTool ? [{ name: "process", description: "process base" }] : []),
+      ...(schedulerToolName ? [{ name: schedulerToolName, description: "scheduler base" }] : []),
+    ] as AnyAgentTool[]),
+  );
   const tool = tools.find((entry) => entry.name === toolName);
   return {
     toolNames: tools.map((entry) => entry.name),
@@ -54,6 +61,19 @@ describe("createOpenClawCodingTools availability guidance", () => {
       "Control existing exec: list, poll, log, write, send-keys, submit, paste, kill. poll/log: status, output, quiet success, completion without auto-wake, input hints. Others: input/intervention.",
     );
   });
+
+  it.each(["automations", "cron", undefined] as const)(
+    "keeps shell-quoting guidance without process and with scheduler %s",
+    (schedulerToolName) => {
+      const exec = findToolDescription("exec", schedulerToolName, false);
+
+      expect(exec.description).toBe(
+        schedulerToolName
+          ? "Run shell and wait for completion. No sleep loops for reminders/follow-ups; use automations. TTY CLI/UI/coding agent: pty=true. Quote arguments containing shell metacharacters, including URL query strings with `?` or `&`."
+          : "Run shell and wait for completion. TTY CLI/UI/coding agent: pty=true. Quote arguments containing shell metacharacters, including URL query strings with `?` or `&`.",
+      );
+    },
+  );
 
   it.each([
     { name: "process", description: "plugin process", available: [] },

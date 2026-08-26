@@ -710,11 +710,21 @@ describe("tool descriptions", () => {
     expect(processTool.description).toContain("write, send-keys, submit, paste, kill");
   });
 
-  it.runIf(!isWin)("reminds the model to quote shell metacharacters", () => {
-    expect(execTool.description).toContain(
-      "Quote arguments containing shell metacharacters, including URL query strings with `?` or `&`.",
-    );
-  });
+  it.each(["darwin", "linux", "win32"] as const)(
+    "limits shell-quoting guidance to Unix hosts: %s",
+    (platform) => {
+      const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue(platform);
+      try {
+        expect(
+          execTool.description.includes(
+            "Quote arguments containing shell metacharacters, including URL query strings with `?` or `&`.",
+          ),
+        ).toBe(platform !== "win32");
+      } finally {
+        platformSpy.mockRestore();
+      }
+    },
+  );
 });
 
 beforeEach(() => {
