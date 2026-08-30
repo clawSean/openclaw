@@ -14,12 +14,7 @@ import { tryPrepareFreshManagerRuntimeSession } from "../acp/control-plane/manag
 import { getAcpRuntimeBackend } from "../acp/runtime/registry.js";
 import { buildAcpDatabaseSessionKey } from "../acp/runtime/session-meta-keys.js";
 import { writeAcpSessionMetaForMigration } from "../acp/runtime/session-meta.js";
-import {
-  listAgentIds,
-  resolveAgentDir,
-  resolveAgentWorkspaceDir,
-  resolveAmbientOwnerAgentId,
-} from "../agents/agent-scope.js";
+import { listAgentIds, resolveAgentDir, resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import {
   clearBootstrapSnapshot,
   clearBootstrapSnapshotOnSessionBoundary,
@@ -57,6 +52,7 @@ import { resolveResetPreservedSelection } from "../config/sessions/reset-preserv
 import { loadSessionEntryReadOnly } from "../config/sessions/session-accessor.js";
 import { createSessionDiffBaselineCaptureClaim } from "../config/sessions/session-diff-baseline-capture.js";
 import { sessionEntryForkedFromParent } from "../config/sessions/session-entry-lineage.js";
+import { selectSessionPresentation } from "../config/sessions/session-entry-presentation.js";
 import { projectPublicSessionEntry } from "../config/sessions/session-entry-projection.js";
 import {
   buildSessionCreationStamp,
@@ -121,6 +117,7 @@ import {
   closeAcpRuntimeForSession,
   closeChildAcpRuntimesForParent,
 } from "./session-reset-acp.js";
+import { resolveLifecycleAgentId } from "./session-reset-agent-id.js";
 import { notifyGatewaySessionReset } from "./session-reset-notifications.js";
 import { readGatewayBeforeResetPluginHookMessages } from "./session-reset-transcript.js";
 import {
@@ -137,10 +134,6 @@ import {
   resolveSessionWorkerPlacementMutationError,
   retireSessionWorkerPlacementBeforeMutation,
 } from "./worker-environments/session-placement-lifecycle.js";
-
-function resolveLifecycleAgentId(cfg: OpenClawConfig, agentId?: string): string {
-  return normalizeAgentId(agentId ?? resolveAmbientOwnerAgentId(cfg));
-}
 
 async function resetSessionAgentHarnesses(params: {
   cfg: OpenClawConfig;
@@ -1386,7 +1379,7 @@ export async function performGatewaySessionReset(params: {
             traceLevel: currentEntry?.traceLevel,
             reasoningLevel: currentEntry?.reasoningLevel,
             elevatedLevel: currentEntry?.elevatedLevel,
-            ttsAuto: currentEntry?.ttsAuto,
+            ...selectSessionPresentation(currentEntry),
             execHost: params.execNode
               ? "node"
               : params.clearExecBinding

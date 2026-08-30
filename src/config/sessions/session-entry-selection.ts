@@ -3,6 +3,8 @@ import { hasSessionActiveAutoModelFallback } from "./model-override-provenance.j
 import type { SessionPatchProjectionSnapshot } from "./session-accessor.types.js";
 import type { InternalSessionEntry, SessionEntry } from "./types.js";
 
+export { selectSessionPresentation } from "./session-entry-presentation.js";
+
 type SessionProjectionTarget = {
   candidateKeys?: readonly string[];
   primaryKey: string;
@@ -113,6 +115,7 @@ export function inheritSessionSelection(
     ...(parentEntry.traceLevel ? { traceLevel: parentEntry.traceLevel } : {}),
     ...(parentEntry.reasoningLevel ? { reasoningLevel: parentEntry.reasoningLevel } : {}),
     ...(parentEntry.elevatedLevel ? { elevatedLevel: parentEntry.elevatedLevel } : {}),
+    ...(parentEntry.streamingMode ? { streamingMode: parentEntry.streamingMode } : {}),
     ...(inheritAuthProfile && authProfileOverrideSource && parentEntry.authProfileOverride
       ? { authProfileOverride: parentEntry.authProfileOverride }
       : {}),

@@ -67,6 +67,7 @@ export function createDraftState(params: TurnConfig): TelegramDraftStateSlice {
   const accountBlockStreamingEnabled = resolveChannelStreamingBlockEnabled(params.telegramCfg, {
     previewAvailable,
     blockStreamingDefault: params.cfg.agents?.defaults?.blockStreamingDefault,
+    sessionStreamingMode: params.sessionStreamingMode,
   });
   const canStreamAnswerDraft = previewAvailable && !accountBlockStreamingEnabled;
   const streamReasoningDraft = params.resolvedReasoningLevel === "stream";
@@ -176,15 +177,22 @@ export function createDraftState(params: TurnConfig): TelegramDraftStateSlice {
     reasoning: createDraftLane("reasoning", canStreamReasoningDraft),
   };
   const resolvedBlockStreamingEnabled = resolveChannelStreamingBlockEnabled(params.telegramCfg);
-  const disableBlockStreaming = !streamDeliveryEnabled
-    ? true
-    : forceBlockStreamingForReasoning
-      ? false
-      : typeof resolvedBlockStreamingEnabled === "boolean"
-        ? !resolvedBlockStreamingEnabled
-        : canStreamAnswerDraft
-          ? true
-          : undefined;
+  const hasSessionStreamingOverride =
+    params.sessionStreamingMode === "off" ||
+    params.sessionStreamingMode === "partial" ||
+    params.sessionStreamingMode === "block" ||
+    params.sessionStreamingMode === "progress";
+  const preserveConfiguredOff = !hasSessionStreamingOverride && params.streamMode === "off";
+  const disableBlockStreaming =
+    isRoomEvent || preserveConfiguredOff
+      ? true
+      : forceBlockStreamingForReasoning
+        ? false
+        : typeof resolvedBlockStreamingEnabled === "boolean"
+          ? !resolvedBlockStreamingEnabled
+          : canStreamAnswerDraft
+            ? true
+            : undefined;
 
   return {
     answerLane: lanes.answer,

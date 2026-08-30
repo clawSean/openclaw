@@ -39,7 +39,7 @@ import {
 } from "../../config/sessions/session-accessor.js";
 import { sessionEntryForkedFromParent } from "../../config/sessions/session-entry-lineage.js";
 import { buildSessionCreationStamp } from "../../config/sessions/session-entry-provenance.js";
-import { selectSessionModelOverride } from "../../config/sessions/session-entry-selection.js";
+import * as sessionSelections from "../../config/sessions/session-entry-selection.js";
 import { resolveSessionKey } from "../../config/sessions/session-key.js";
 import type { SessionResetBoundaryRequest } from "../../config/sessions/session-reset-boundary-event.js";
 import { resolveSessionStorePathForScope } from "../../config/sessions/session-store-path.js";
@@ -326,9 +326,9 @@ function resolveReplySessionRolloverState(
     verboseLevel: entry.verboseLevel,
     traceLevel: entry.traceLevel,
     reasoningLevel: entry.reasoningLevel,
-    ttsAuto: entry.ttsAuto,
+    ...sessionSelections.selectSessionPresentation(entry),
     responseUsage: entry.responseUsage,
-    ...selectSessionModelOverride(preservedSelection),
+    ...sessionSelections.selectSessionModelOverride(preservedSelection),
     authProfileOverride: preservedSelection.authProfileOverride,
     authProfileOverrideSource: preservedSelection.authProfileOverrideSource,
     authProfileOverrideCompactionCount: preservedSelection.authProfileOverrideCompactionCount,
@@ -828,7 +828,7 @@ async function initSessionStateAttemptLocked(
     sessionId = reusableEntry.sessionId;
     systemSent = reusableEntry.systemSent ?? false;
     abortedLastRun = reusableEntry.abortedLastRun ?? false;
-    preservedState = selectSessionModelOverride(reusableEntry);
+    preservedState = sessionSelections.selectSessionModelOverride(reusableEntry);
   } else {
     // Durable resets retain their transcript identity for cursor continuity; ACP
     // resets still rotate the local session id that owns provider conversation state.

@@ -37,6 +37,7 @@ import {
   getChannelStreamingConfigObject,
   type StreamingCompatEntry,
 } from "./streaming-config-readers.js";
+import { parsePreviewStreamingMode } from "./streaming-mode-normalize.js";
 
 export { isChannelProgressAttentionLine } from "./progress-draft-lines.js";
 export type { ChannelProgressDraftLine } from "./progress-draft-lines.js";
@@ -60,27 +61,6 @@ export type {
 
 function asInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) ? value : undefined;
-}
-
-function normalizeStreamingMode(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const normalized = normalizeOptionalLowercaseString(value);
-  return normalized || null;
-}
-
-function parsePreviewStreamingMode(value: unknown): StreamingMode | null {
-  const normalized = normalizeStreamingMode(value);
-  if (
-    normalized === "off" ||
-    normalized === "partial" ||
-    normalized === "block" ||
-    normalized === "progress"
-  ) {
-    return normalized;
-  }
-  return null;
 }
 
 function asProgressConfig(value: unknown): ChannelStreamingProgressConfig | undefined {
@@ -771,6 +751,7 @@ export function resolveChannelStreamingBlockEnabled(
   previewPolicy: {
     previewAvailable: boolean;
     blockStreamingDefault?: "off" | "on";
+    sessionStreamingMode?: unknown;
   },
 ): boolean;
 export function resolveChannelStreamingBlockEnabled(
@@ -778,6 +759,7 @@ export function resolveChannelStreamingBlockEnabled(
   previewPolicy?: {
     previewAvailable: boolean;
     blockStreamingDefault?: "off" | "on";
+    sessionStreamingMode?: unknown;
   },
 ): boolean | undefined {
   const explicitBlockStreaming = asBoolean(getChannelStreamingConfigObject(entry)?.block?.enabled);
@@ -786,9 +768,9 @@ export function resolveChannelStreamingBlockEnabled(
   }
   // Explicit channel choices beat the inherited agent default. Keep availability
   // in the decision so a turn that cannot render a preview may still use blocks.
-  const explicitPreviewMode = parsePreviewStreamingMode(
-    getChannelStreamingConfigObject(entry)?.mode,
-  );
+  const sessionPreviewMode = parsePreviewStreamingMode(previewPolicy.sessionStreamingMode);
+  const explicitPreviewMode =
+    sessionPreviewMode ?? parsePreviewStreamingMode(getChannelStreamingConfigObject(entry)?.mode);
   if (
     previewPolicy.previewAvailable &&
     explicitPreviewMode !== null &&
@@ -912,7 +894,12 @@ export function resolveChannelStreamingSuppressDefaultToolProgressMessages(
 export function resolveChannelPreviewStreamMode(
   entry: StreamingCompatEntry | null | undefined,
   defaultMode: StreamingMode,
+  options?: { sessionMode?: unknown },
 ): StreamingMode {
+  const sessionMode = parsePreviewStreamingMode(options?.sessionMode);
+  if (sessionMode) {
+    return sessionMode;
+  }
   return parsePreviewStreamingMode(getChannelStreamingConfigObject(entry)?.mode) ?? defaultMode;
 }
 

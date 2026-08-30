@@ -18,7 +18,6 @@ import type { OpenClawConfig } from "../../config/config.js";
 import type { InternalSessionEntry as SessionEntry } from "../../config/sessions.js";
 import {
   appendTranscriptMessage,
-  appendTranscriptEvent,
   listSessionParticipantsReadOnly,
   loadSessionEntry,
   loadTranscriptEvents,
@@ -77,6 +76,7 @@ import {
   initSessionState,
   readSessionStore as readSessionStoreFast,
   runExplicitResetCases,
+  writeTerminalTranscriptSessionStore,
   writeSessionStore as writeSessionStoreFast,
 } from "./test/session.test-support.js";
 
@@ -264,47 +264,6 @@ describe("resolveReplySessionPreprocessingState", () => {
     await expect(resolvePreprocessingState(storePath)).rejects.toThrow();
   });
 });
-
-async function writeTerminalTranscriptSessionStore(params: {
-  storePath: string;
-  sessionKey: string;
-  sessionId: string;
-  status?: SessionEntry["status"];
-  omitStatus?: boolean;
-  updatedAt: number;
-  endedAt: number;
-  transcriptMutationOrder: "after-registry" | "before-registry";
-}): Promise<void> {
-  const sessionFile = `${params.sessionId}.jsonl`;
-  const status = params.status ?? (params.omitStatus ? undefined : "done");
-  const appendTranscript = () =>
-    appendTranscriptEvent(
-      {
-        agentId: "main",
-        sessionId: params.sessionId,
-        sessionKey: params.sessionKey,
-        storePath: params.storePath,
-      },
-      { type: "custom", timestamp: "1970-01-01T00:00:00.001Z" },
-    );
-  if (params.transcriptMutationOrder === "before-registry") {
-    await appendTranscript();
-  }
-  await writeSessionStoreFast(params.storePath, {
-    [params.sessionKey]: {
-      sessionId: params.sessionId,
-      sessionFile,
-      updatedAt: params.updatedAt,
-      startedAt: params.endedAt - 10_000,
-      endedAt: params.endedAt,
-      runtimeMs: 9_000,
-      ...(status ? { status } : {}),
-    },
-  });
-  if (params.transcriptMutationOrder === "after-registry") {
-    await appendTranscript();
-  }
-}
 
 function setMinimalCurrentConversationBindingRegistryForTests(): void {
   setActivePluginRegistry(
@@ -2192,6 +2151,7 @@ describe("initSessionState RawBody", () => {
         traceLevel: "high",
         reasoningLevel: "low",
         ttsAuto: "always",
+        streamingMode: "block",
         pinnedAt: 123,
       },
       expected: {
@@ -2200,8 +2160,17 @@ describe("initSessionState RawBody", () => {
         traceLevel: "high",
         reasoningLevel: "low",
         ttsAuto: "always",
+        streamingMode: "block",
         pinnedAt: 123,
       },
+      persisted: true,
+    },
+    {
+      name: "preserves the session stream mode across an implicit idle rollover",
+      slug: "stream-idle",
+      entry: { streamingMode: "partial" as const },
+      expected: { streamingMode: "partial" },
+      reset: { mode: "idle" as const, idleMinutes: 1 },
       persisted: true,
     },
     {
@@ -2278,7 +2247,10 @@ describe("initSessionState RawBody", () => {
         SessionKey: sessionKey,
       },
       cfg: {
-        session: { store: storePath, reset: { mode: "daily", atHour: 4 } },
+        session: {
+          store: storePath,
+          reset: "reset" in scenario ? scenario.reset : ({ mode: "daily", atHour: 4 } as const),
+        },
       } as OpenClawConfig,
     });
 
@@ -4033,6 +4005,7 @@ describe("initSessionState preserves behavior overrides across /new and /reset",
       verboseLevel: "on",
       thinkingLevel: "high",
       reasoningLevel: "low",
+      streamingMode: "progress",
       label: "telegram-priority",
     } as const;
     const cases = await runExplicitResetCases({

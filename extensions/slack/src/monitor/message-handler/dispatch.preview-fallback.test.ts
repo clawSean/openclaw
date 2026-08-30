@@ -27,6 +27,17 @@ import {
   emitCompactProgressScenario,
   type SlackReplyOptionEvent,
 } from "./dispatch.compact-progress.test-support.js";
+import {
+  contentTaskId,
+  createDraftStreamStub,
+  createSlackPlatformError,
+  draftUpdateTexts,
+  expectRecordFields,
+  noopAsync,
+  planUpdate,
+  taskUpdate,
+  TestSlackStreamNotDeliveredError,
+} from "./dispatch.preview-fallback.test-support.js";
 
 const FINAL_REPLY_TEXT = "final answer";
 const THREAD_TS = "thread-1";
@@ -34,6 +45,7 @@ const STREAM_MESSAGE_TS = "171234.567";
 const SAME_TEXT = "same reply";
 
 const getGlobalHookRunnerMock = vi.hoisted(() => vi.fn());
+const getSessionEntryMock = vi.hoisted(() => vi.fn());
 const createSlackDraftStreamMock = vi.fn();
 type DeliveryParams = Omit<
   Parameters<typeof import("../replies.js").deliverReplies>[0],
@@ -71,18 +83,10 @@ const emitSlackMessageSentHooksMock = vi.fn(() => {});
 const reactSlackMessageMock = vi.fn(async () => {});
 const removeSlackReactionMock = vi.fn(async () => {});
 const logVerboseMock = vi.fn();
-class TestSlackStreamNotDeliveredError extends Error {
-  readonly pendingText: string;
-  readonly slackCode: string;
-  constructor(pendingText: string, slackCode: string) {
-    super(`slack-stream not delivered: ${slackCode}`);
-    this.name = "SlackStreamNotDeliveredError";
-    this.pendingText = pendingText;
-    this.slackCode = slackCode;
-  }
-}
 let mockedNativeStreaming = false;
 let mockedBlockStreamingEnabled: boolean | undefined = false;
+let resolveBlockStreamingFromPreviewAvailability = false;
+let capturedPreviewAvailable: boolean | undefined;
 let mockedSlackStreamingMode: "off" | "partial" | "block" | "progress" = "partial";
 let mockedSlackDraftMode: "replace" | "status_final" | "append" = "append";
 let mockedPinnedMainDmOwner: string | undefined;
@@ -149,14 +153,6 @@ function requireCapturedTyping() {
   return capturedTyping;
 }
 
-function createSlackPlatformError(error: string, details?: { needed?: string; provided?: string }) {
-  // Mirrors @slack/web-api 7.18.0 platformErrorFromResult: message plus structured result data.
-  return Object.assign(new Error(`An API error occurred: ${error}`), {
-    code: "slack_webapi_platform_error",
-    data: { ok: false, error, ...details },
-  });
-}
-
 function requireCapturedItemEventHandler() {
   const handler = capturedReplyOptions?.onItemEvent;
   if (!handler) {
@@ -166,12 +162,6 @@ function requireCapturedItemEventHandler() {
 }
 
 const requireRecord = createRequireRecord("object", "label-not-object");
-
-function expectRecordFields(record: Record<string, unknown>, fields: Record<string, unknown>) {
-  for (const [key, value] of Object.entries(fields)) {
-    expect(record[key]).toEqual(value);
-  }
-}
 
 function requireMockCall(mock: unknown, index: number, label: string): unknown[] {
   const call = (mock as { mock?: { calls?: unknown[][] } }).mock?.calls?.[index];
@@ -217,23 +207,6 @@ function expectNativeStreamText(text: string, count = 1) {
   expect(matches).toHaveLength(count);
 }
 
-function planUpdate(title: string) {
-  return { type: "plan_update", title };
-}
-
-function taskUpdate(
-  id: unknown,
-  title: string,
-  status: "pending" | "in_progress" | "complete" | "error",
-  extra?: Record<string, unknown>,
-) {
-  return { type: "task_update", id, title, status, ...extra };
-}
-
-function contentTaskId(prefix: string) {
-  return expect.stringMatching(new RegExp(`^${prefix}_[a-f0-9]{8}_1$`, "u"));
-}
-
 function collectNativeTaskUpdates() {
   const chunks: unknown[] = [];
   const collectChunks = (call: unknown[]) => {
@@ -264,36 +237,6 @@ function expectDeliverReplyCall(index: number, text: string, fields?: Record<str
   );
   expectRecordFields(params, { replyThreadTs: THREAD_TS, ...fields });
   expect(params.replies).toEqual([{ text }]);
-}
-
-const noop = () => {};
-const noopAsync = async () => {};
-function createDraftStreamStub() {
-  return {
-    update: vi.fn(),
-    flush: vi.fn(noopAsync),
-    clear: vi.fn(noopAsync),
-    discardPending: vi.fn(noopAsync),
-    seal: vi.fn(noopAsync),
-    stop: vi.fn(noop),
-    forceNewMessage: vi.fn(),
-    dropDetachedMessages: vi.fn(noopAsync),
-    finalizeMessage: vi.fn(async (_messageId: string, editFinal: () => Promise<void>) => {
-      await editFinal();
-      return true;
-    }),
-    messageId: (): string | undefined => "171234.567",
-    channelId: () => "C123",
-  };
-}
-
-function draftUpdateTexts(draftStream: ReturnType<typeof createDraftStreamStub>): string[] {
-  return draftStream.update.mock.calls.map(([update]) => {
-    if (typeof update === "string") {
-      return update;
-    }
-    return requireRecord(update, "draft update").text as string;
-  });
 }
 
 function expectLastDraftUpdateText(
@@ -755,7 +698,16 @@ vi.mock("openclaw/plugin-sdk/channel-outbound", async (importOriginal) => {
       const previousText = typeof previous === "string" ? previous.trim() : previous?.text.trim();
       return previousText === normalized ? lines : [...lines, line].slice(-params.maxLines);
     },
-    resolveChannelStreamingBlockEnabled: () => mockedBlockStreamingEnabled,
+    resolveChannelStreamingBlockEnabled: (
+      _entry: unknown,
+      previewPolicy?: { previewAvailable?: boolean },
+    ) => {
+      capturedPreviewAvailable = previewPolicy?.previewAvailable;
+      if (resolveBlockStreamingFromPreviewAvailability) {
+        return previewPolicy?.previewAvailable !== true;
+      }
+      return mockedBlockStreamingEnabled;
+    },
     resolveChannelStreamingNativeTransport: () => mockedNativeStreaming,
     resolveChannelStreamingSuppressDefaultToolProgressMessages: (
       entry?: {
@@ -869,6 +821,10 @@ vi.mock("openclaw/plugin-sdk/security-runtime", () => ({
   resolvePinnedMainDmOwnerFromAllowlist: () => mockedPinnedMainDmOwner,
 }));
 
+vi.mock("openclaw/plugin-sdk/session-store-runtime", () => ({
+  getSessionEntry: getSessionEntryMock,
+}));
+
 vi.mock("openclaw/plugin-sdk/string-coerce-runtime", async (importOriginal) => {
   const actual = await importOriginal<typeof import("openclaw/plugin-sdk/string-coerce-runtime")>();
   const normalizeMockLowercaseString = (value?: string) => value?.toLowerCase();
@@ -906,14 +862,12 @@ vi.mock("../../sent-thread-cache.js", () => ({
   recordSlackThreadParticipation: recordSlackThreadParticipationMock,
 }));
 
-vi.mock("../../stream-mode.js", () => ({
-  applyAppendOnlyStreamUpdate: ({ incoming }: { incoming: string }) => ({
-    changed: true,
-    rendered: incoming,
-    source: incoming,
-  }),
-  resolveSlackStreamingConfig: () => ({
-    mode: mockedSlackStreamingMode,
+vi.mock("../../stream-mode.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../stream-mode.js")>()),
+  resolveSlackStreamingConfig: (params?: {
+    sessionStreamingMode?: typeof mockedSlackStreamingMode;
+  }) => ({
+    mode: params?.sessionStreamingMode ?? mockedSlackStreamingMode,
     nativeStreaming: mockedNativeStreaming,
     draftMode: mockedSlackDraftMode,
   }),
@@ -1191,11 +1145,14 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
     removeSlackReactionMock.mockReset();
     logVerboseMock.mockReset();
     getGlobalHookRunnerMock.mockReset().mockReturnValue(undefined);
+    getSessionEntryMock.mockReset().mockReturnValue(undefined);
     for (const value of Object.values(statusReactionControllerMock)) {
       value.mockClear();
     }
     mockedNativeStreaming = false;
     mockedBlockStreamingEnabled = false;
+    resolveBlockStreamingFromPreviewAvailability = false;
+    capturedPreviewAvailable = undefined;
     mockedSlackStreamingMode = "partial";
     mockedSlackDraftMode = "append";
     mockedPinnedMainDmOwner = undefined;
@@ -1563,6 +1520,31 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
     expect(startSlackStreamMock).toHaveBeenCalledTimes(1);
     expect(stopSlackStreamMock).toHaveBeenCalledTimes(1);
     expect(deliverRepliesMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps inherited blocks when no Slack preview transport can target the turn", async () => {
+    getGlobalHookRunnerMock.mockReturnValue({
+      hasHooks: vi.fn((hookName: string) => hookName === "reply_payload_sending"),
+    });
+    mockedNativeStreaming = true;
+    mockedSlackStreamingMode = "partial";
+    mockedSlackIsThreadReply = false;
+    mockedReplyThreadTs = undefined;
+    resolveBlockStreamingFromPreviewAvailability = true;
+
+    await dispatchPreparedSlackMessage(
+      createPreparedSlackMessage({
+        message: { ts: undefined, event_ts: undefined, thread_ts: undefined },
+        ctxPayload: { MessageThreadId: undefined },
+        replyToMode: "off",
+      }),
+    );
+
+    expect(capturedPreviewAvailable).toBe(false);
+    expect(capturedReplyOptions?.disableBlockStreaming).toBe(false);
+    expect(createSlackDraftStreamMock).not.toHaveBeenCalled();
+    expect(startSlackStreamMock).not.toHaveBeenCalled();
+    expect(deliverRepliesMock).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to normal delivery when preview finalize fails", async () => {
@@ -2248,6 +2230,25 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
       ]);
     },
   );
+
+  it("uses a session preview override ahead of Slack account config", async () => {
+    mockedSlackStreamingMode = "off";
+    getSessionEntryMock.mockReturnValue({ streamingMode: "partial" });
+
+    await dispatchPreparedSlackMessage(createPreparedSlackMessage());
+
+    expect(createSlackDraftStreamMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets a session turn Slack previews off without suppressing final delivery", async () => {
+    mockedSlackStreamingMode = "partial";
+    getSessionEntryMock.mockReturnValue({ streamingMode: "off" });
+
+    await dispatchPreparedSlackMessage(createPreparedSlackMessage());
+
+    expect(createSlackDraftStreamMock).not.toHaveBeenCalled();
+    expect(deliverRepliesMock).toHaveBeenCalledTimes(1);
+  });
 
   it("does not restart Slack session status once the turn has visible output", async () => {
     const setSlackSessionStatus = vi.fn(async () => true);
