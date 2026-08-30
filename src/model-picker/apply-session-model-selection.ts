@@ -69,6 +69,10 @@ export type ApplySessionModelSelectionParams = {
   canPersistStickyModelSelection?: boolean;
   stickyModelSelectionTarget?: AgentModelPrimaryWriteTarget;
   validateAuthProfileSelection?: () => string | undefined;
+  /** Revalidates caller-owned selection authority after asynchronous runtime preparation. */
+  validateSelectionAuthorization?: () => Promise<string | undefined>;
+  /** Synchronous final fence evaluated by the authoritative session commit. */
+  validateSelectionCommit?: () => string | undefined;
   request: SessionModelSelectionRequest;
   /** Raw directive text used only by the existing session patch hook. */
   patchModel?: string;
@@ -330,6 +334,27 @@ export async function applySessionModelSelection(
   if (placementError) {
     return { status: "rejected", reason: "invalid-runtime", message: placementError };
   }
+  const authorizationError = await params.validateSelectionAuthorization?.();
+  if (authorizationError) {
+    return { status: "rejected", reason: "not-allowed", message: authorizationError };
+  }
+  // Caller authorization can yield too. Recheck the in-memory commit target after
+  // every await so a reset or replacement cannot be overwritten by a stale snapshot.
+  if (!params.storePath) {
+    const commitEntry = params.sessionStore[params.sessionKey] ?? params.sessionEntry;
+    if (isModelSelectionLocked(commitEntry)) {
+      return { status: "rejected", reason: "locked", message: MODEL_SELECTION_LOCKED_MESSAGE };
+    }
+    if (
+      params.sessionStore[params.sessionKey] !== startingStoreEntry ||
+      commitEntry.sessionId !== initialEntry.sessionId
+    ) {
+      return {
+        status: "conflict",
+        message: "Model change was not applied because the session changed. Retry.",
+      };
+    }
+  }
   // An explicit selection retains the existing persistence and conflict semantics even when idempotent.
   nextEntry.updatedAt = Date.now();
   let persistedEntry: SessionEntry;
@@ -338,6 +363,7 @@ export async function applySessionModelSelection(
   // override that became incompatible during that window is rejected without mutating state.
   const validateCommit = () =>
     validateSelection() ??
+    params.validateSelectionCommit?.() ??
     resolveActivePlacementModelSelectionError({
       cfg: params.cfg,
       agentId: params.agentId,
@@ -383,6 +409,10 @@ export async function applySessionModelSelection(
     }
     persistedEntry = persistence.entry;
   } else {
+    const commitError = validateCommit();
+    if (commitError) {
+      return { status: "rejected", reason: "not-allowed", message: commitError };
+    }
     adoptPersistedSessionSnapshot(params.sessionEntry, nextEntry);
     params.sessionStore[params.sessionKey] = params.sessionEntry;
     persistedEntry = params.sessionEntry;
