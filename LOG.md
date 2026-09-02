@@ -31,3 +31,10 @@
   tab-enumeration budgets, cancellation, standalone routing, and screenshot
   ownership. Focused browser proof: 293 tests passed, 3 Chromium-only tests
   skipped because the matching Playwright browser binary is absent.
+- Published secret-free standalone distribution at
+  `https://github.com/clawSean/openclaw-arc-dia-browser-extension`.
+- Published release `v2.2.0-arc-dia.1` with native-faithful and personal-hardened
+  ZIPs plus SHA-256 checksums. Downloaded all release assets back from GitHub and
+  verified both checksums.
+- TruffleHog found zero verified secrets in the public filesystem and complete
+  Git history. GitHub Actions artifact validation passed at run `33694333755`.

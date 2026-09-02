@@ -7,7 +7,8 @@
 - Branch: `personal/browser-extension-compat-v2026.8.2`
 - Previous reference: `/Users/Sean/projects/openclaw-arc-extension`
 - Live installation: unchanged; tests use disposable Arc/Dia profiles
-- Proof state: extension unit suite green; real Arc/Dia relay path partially green
+- Proof state: source, artifacts, secret scans, GitHub readback, and CI green;
+  final live interaction proof awaits patched Gateway activation
 
 ## Decisions
 
@@ -21,7 +22,7 @@
 
 1. With explicit approval, activate the patched Gateway runtime and restart it.
 2. Repeat the Arc/Dia interaction and screenshot matrix against that runtime.
-3. Publish the two clean branches and final checksums after live proof.
+3. Record final live results and close the project.
 
 ## Known risks
 
