@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenClaw Browser Compatibility Fixture</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 48rem; }
+      button, input, select { font: inherit; margin: 0.25rem 0; }
+      #result { padding: 0.5rem; border: 1px solid #999; min-height: 1.5rem; }
+    </style>
+  </head>
+  <body>
+    <h1>OpenClaw browser compatibility fixture</h1>
+    <label for="message">Message</label>
+    <input id="message" name="message" autocomplete="off" />
+    <button id="copy" type="button">Copy input</button>
+    <button id="increment" type="button">Increment</button>
+    <button id="spa" type="button">SPA transition</button>
+    <select id="choice">
+      <option value="alpha">Alpha</option>
+      <option value="beta">Beta</option>
+    </select>
+    <p id="result" aria-live="polite">Ready</p>
+    <a id="second" href="/second">Second page</a>
+    <script>
+      let count = 0;
+      document.querySelector("#copy").addEventListener("click", () => {
+        document.querySelector("#result").textContent = document.querySelector("#message").value;
+      });
+      document.querySelector("#increment").addEventListener("click", () => {
+        count += 1;
+        document.querySelector("#result").textContent = `Count ${count}`;
+      });
+      document.querySelector("#spa").addEventListener("click", () => {
+        history.pushState({ fixture: true }, "", "/spa");
+        document.querySelector("#result").textContent = "SPA complete";
+      });
+    </script>
+  </body>
+</html>
