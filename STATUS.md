@@ -2,7 +2,7 @@
 
 ## Current
 
-- Phase: native-faithful compatibility repair and E2E proof
+- Phase: runtime activation approval and final live E2E proof
 - Base: OpenClaw `v2026.8.2` at `0965053fe6b9341776df147a6934b7485c60b5ca`
 - Branch: `personal/browser-extension-compat-v2026.8.2`
 - Previous reference: `/Users/Sean/projects/openclaw-arc-extension`
@@ -19,11 +19,9 @@
 
 ## Next
 
-1. Finish Arc/Dia interaction matrix and separate extension failures from the
-   installed `2026.8.2` Gateway's Playwright/session failures.
-2. Prove the upstream stale-group repair on both browsers.
-3. Cut the native-faithful deliverable branch.
-4. Port and narrow the cookie firewall on a separate hardened branch.
+1. With explicit approval, activate the patched Gateway runtime and restart it.
+2. Repeat the Arc/Dia interaction and screenshot matrix against that runtime.
+3. Publish the two clean branches and final checksums after live proof.
 
 ## Known risks
 

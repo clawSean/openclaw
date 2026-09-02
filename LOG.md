@@ -27,3 +27,7 @@
   downloaded merely to satisfy that duplicate harness.
 - No Gateway restart, global extension install, or normal browser-profile change
   has occurred.
+- Ported upstream runtime fixes `d52acf702b4` and `fe784239d80` for persistent
+  tab-enumeration budgets, cancellation, standalone routing, and screenshot
+  ownership. Focused browser proof: 293 tests passed, 3 Chromium-only tests
+  skipped because the matching Playwright browser binary is absent.
