@@ -38,3 +38,12 @@
   verified both checksums.
 - TruffleHog found zero verified secrets in the public filesystem and complete
   Git history. GitHub Actions artifact validation passed at run `33694333755`.
+- After the first approved runtime activation, fresh Dia proof reproduced a
+  second post-release Gateway defect: cancellation cleanup after one successful
+  action disconnected the shared Playwright session, so the next existing-tab
+  action fell through to forbidden `Target.createTarget` behavior.
+- Ported upstream `a4b24a878ff` byte-exact as `244bcd2255c` to isolate native
+  action cancellation by page. Focused result: 126 passed, 8 opt-in Chromium
+  tests skipped; full production build passed.
+- Bounded the CDP compatibility probe so a nonresponsive extension options page
+  fails after five seconds instead of stranding the test harness.
