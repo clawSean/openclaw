@@ -47,3 +47,14 @@
   tests skipped; full production build passed.
 - Bounded the CDP compatibility probe so a nonresponsive extension options page
   fails after five seconds instead of stranding the test harness.
+- Activated build `244bcd2255c326cabe6303edb6273a1846ffe80b` through the
+  approved watchdog path and verified a fresh Gateway PID, healthy connectivity,
+  the project CLI symlink, and the matching buildstamp.
+- Final Dia proof used a disposable profile, disabled automatic native bootstrap
+  before manual pairing, connected through the intended Tailscale WSS route, and
+  published the Selenium web-form tab. The relay and tab inventory were healthy.
+- The first semantic snapshot still failed: Playwright reported temporarily
+  unavailable target identities, the later selection pass treated the browser as
+  empty, and attach-only fallback attempted prohibited `Target.createTarget`.
+  Therefore the published extension artifacts remain valid, but dependable
+  snapshot/action E2E is not complete and must not be represented as green.

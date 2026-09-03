@@ -9,7 +9,7 @@
 - Live installation: compatibility worktree active through the OpenClaw CLI
   symlink; tests use disposable Arc/Dia profiles
 - Proof state: source, artifacts, secret scans, GitHub readback, and CI green;
-  final live interaction proof awaits patched Gateway activation
+  final live proof found an unresolved persistent-Playwright target-identity defect
 
 ## Decisions
 
@@ -22,8 +22,8 @@
 
 ## Next
 
-1. Activate the upstream per-page action-cancellation fix through the approved
-   watchdog restart.
+1. Repair the target-identity handoff between relay inventory and Playwright
+   without allowing implicit remote tab creation.
 2. Repeat the Arc/Dia interaction matrix against that runtime.
 3. Record screenshot proof as environment-blocked unless a capturable NSScreen
    becomes available; do not treat that host limitation as browser failure.
@@ -34,7 +34,9 @@
 - Arc and Dia both expose every required extension API, including `tabGroups`.
 - Automatic native-host discovery does not register Arc or Dia, so remote pairing
   is the dependable cross-browser path.
-- The original `2026.8.2` Gateway intermittently loses Playwright target identity:
+- The original `2026.8.2` Gateway intermittently loses Playwright target identity,
+  and the three matching post-release fixes tested on 2026-09-02 do not fully
+  repair first-snapshot identity resolution in the Tailscale relay topology:
   Arc reports `Remote tab creation is disabled` during an existing-tab action;
   Dia reports `Page closed before browser action completed`. Direct tab discovery
   and snapshots remain healthy. This is below the extension and must be kept out
