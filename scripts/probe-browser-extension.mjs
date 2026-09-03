@@ -16,13 +16,21 @@ async function cdpEvaluate(webSocketDebuggerUrl, expression) {
 
   const id = 1;
   const response = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error("CDP Runtime.evaluate timed out after 5000ms"));
+      ws.terminate();
+    }, 5_000);
     ws.on("message", (data) => {
       const message = JSON.parse(String(data));
       if (message.id !== id) return;
+      clearTimeout(timer);
       if (message.error) reject(new Error(message.error.message));
       else resolve(message.result);
     });
-    ws.once("error", reject);
+    ws.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
   });
 
   ws.send(
