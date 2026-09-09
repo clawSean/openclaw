@@ -35,6 +35,10 @@ describe("personal credential firewall", () => {
     expect(() => authorizeCdpCommand("Target.getTargetInfo", { targetId: "other" })).toThrow(
       /credential firewall/,
     );
+    expect(authorizeCdpCommand("Target.getTargetInfo", {})).toEqual({
+      method: "Target.getTargetInfo",
+      params: {},
+    });
     expect(
       authorizeCdpCommand("Target.setAutoAttach", {
         autoAttach: true,

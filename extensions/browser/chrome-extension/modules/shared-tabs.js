@@ -6,6 +6,8 @@ import {
 export const SHARED_TAB_IDS_KEY = "seanSharedTabIdsV1";
 export const EXPLICIT_SELECTION_KEY = "seanExplicitSelectionV1";
 export const MAX_SHARED_TABS = 256;
+const REPLACEMENT_TAB_ATTEMPTS = 8;
+const REPLACEMENT_TAB_RETRY_MS = 50;
 
 const STORAGE_ERROR = "Sean tab selection is unavailable; no tabs were shared.";
 
@@ -119,6 +121,21 @@ export function createSharedTabsController({ chromeApi = chrome, getGroupColor }
     return tab;
   }
 
+  async function validateReplacementTab(tabId) {
+    let lastError;
+    for (let attempt = 0; attempt < REPLACEMENT_TAB_ATTEMPTS; attempt += 1) {
+      try {
+        return await validateTab(tabId);
+      } catch (error) {
+        lastError = error;
+        if (attempt + 1 < REPLACEMENT_TAB_ATTEMPTS) {
+          await new Promise((resolve) => setTimeout(resolve, REPLACEMENT_TAB_RETRY_MS));
+        }
+      }
+    }
+    throw lastError;
+  }
+
   async function isExplicit() {
     await waitForMutations();
     return explicitSelection;
@@ -213,21 +230,23 @@ export function createSharedTabsController({ chromeApi = chrome, getGroupColor }
     }
     return await mutate(async () => {
       const wasSelected = sharedTabIds.has(removedTabId);
-      const next = new Set(sharedTabIds);
-      next.delete(removedTabId);
+      const withoutRemoved = new Set(sharedTabIds);
+      withoutRemoved.delete(removedTabId);
       if (wasSelected) {
+        // Revoke the retired identity durably before waiting for Arc/Chromium to
+        // publish its replacement. Readers stay behind this serialized mutation,
+        // so access remains fail-closed during the bounded lookup gap.
+        await persist(withoutRemoved);
         try {
-          await validateTab(addedTabId);
-          next.add(addedTabId);
+          await validateReplacementTab(addedTabId);
+          const withReplacement = new Set(withoutRemoved);
+          withReplacement.add(addedTabId);
+          await persist(withReplacement);
         } catch (error) {
-          // The removed identity can never regain authority. Persist its
-          // removal even if Chromium has not made the replacement queryable.
-          await persist(next);
           throw error;
         }
-      }
-      if (wasSelected || next.size !== sharedTabIds.size) {
-        await persist(next);
+      } else if (withoutRemoved.size !== sharedTabIds.size) {
+        await persist(withoutRemoved);
       }
       return wasSelected;
     });

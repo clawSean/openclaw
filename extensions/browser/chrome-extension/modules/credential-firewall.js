@@ -35,8 +35,16 @@ export function authorizeCdpCommand(method, params = {}) {
   // Browser-scoped Target operations are synthesized by the Gateway relay. A
   // physical Target command here is session-scoped inside a shared tab; letting
   // it enumerate or attach arbitrary target ids would escape the selected-tab
-  // ledger. Keep only the two commands used by the flattened relay lifecycle.
-  if (method.startsWith("Target.") && !ALLOWED_TARGET_COMMANDS.has(method)) {
+  // ledger. Keep the flattened relay lifecycle commands plus the current
+  // attached-session identity query Playwright uses (no explicit target id).
+  const currentTargetInfoQuery =
+    method === "Target.getTargetInfo" &&
+    (params?.targetId === undefined || params?.targetId === null || params?.targetId === "");
+  if (
+    method.startsWith("Target.") &&
+    !ALLOWED_TARGET_COMMANDS.has(method) &&
+    !currentTargetInfoQuery
+  ) {
     throw new Error(`${method} is blocked by the personal credential firewall.`);
   }
   if (method === "Target.setAutoAttach" && params?.flatten !== true) {

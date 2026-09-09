@@ -6,6 +6,42 @@ const tabAction = document.getElementById("tabAction");
 const connectionAction = document.getElementById("connectionAction");
 const settings = document.getElementById("settings");
 const errorLine = document.getElementById("error");
+const TRANSIENT_REFRESH_INTERVAL_MS = 250;
+const TRANSIENT_REFRESH_WINDOW_MS = 12_000;
+
+let transientRefreshTimer = null;
+let transientRefreshDeadline = 0;
+
+function updateTransientRefresh(status) {
+  if (transientRefreshTimer !== null) {
+    clearTimeout(transientRefreshTimer);
+    transientRefreshTimer = null;
+  }
+  const waitingForRelay =
+    status?.paired === true &&
+    status.connectionEnabled === true &&
+    status.scopeCleanupPending !== true &&
+    status.state === "connecting";
+  if (!waitingForRelay) {
+    transientRefreshDeadline = 0;
+    return;
+  }
+  if (transientRefreshDeadline === 0) {
+    transientRefreshDeadline = Date.now() + TRANSIENT_REFRESH_WINDOW_MS;
+  }
+  const remaining = transientRefreshDeadline - Date.now();
+  if (remaining <= 0) {
+    transientRefreshDeadline = 0;
+    return;
+  }
+  transientRefreshTimer = setTimeout(
+    () => {
+      transientRefreshTimer = null;
+      void refresh();
+    },
+    Math.min(TRANSIENT_REFRESH_INTERVAL_MS, remaining),
+  );
+}
 
 async function activeTab() {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -25,9 +61,11 @@ function unpairedLabel(nativeBootstrap) {
 async function refresh() {
   const status = await chrome.runtime.sendMessage({ type: "getStatus" });
   if (status?.ok === false) {
+    updateTransientRefresh(null);
     statusLine.textContent = status.error ?? "Could not read browser status.";
     return;
   }
+  updateTransientRefresh(status);
   pairedDetails.classList.toggle("hidden", !status.paired);
   if (status.retiredCopilotCustodyBlocked === true) {
     statusLine.textContent = "Automation paused; open Settings";

@@ -51,12 +51,20 @@ describe("simplified Chrome extension package", () => {
     expect(manifest).toMatchObject({
       name: "OpenClaw Browser — Sean",
       short_name: "Sean Browser",
-      version: "2.3.0.1",
+      version: "2.3.0.2",
     });
     expect(options).toContain("Share only this tab");
     expect(options).not.toContain("tab group");
     expect(options).toContain('id="connectionAction"');
     expect(popup).toContain("Share only this tab with Sean");
     expect(popup).toContain('id="connectionAction"');
+  });
+
+  it("refreshes the popup while a replacement relay connection authenticates", () => {
+    const popup = fs.readFileSync(path.join(extensionDir, "popup.js"), "utf8");
+
+    expect(popup).toContain('status.state === "connecting"');
+    expect(popup).toContain("TRANSIENT_REFRESH_WINDOW_MS");
+    expect(popup).toContain("void refresh()");
   });
 });

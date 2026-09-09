@@ -169,7 +169,22 @@ describe("personal shared-tab selection", () => {
 
     await expect(harness.controller.replaceTab(3, 1)).resolves.toBe(true);
 
-    expect(harness.session.set).toHaveBeenCalledWith({ [SHARED_TAB_IDS_KEY]: [2, 3] });
+    expect(harness.session.set).toHaveBeenNthCalledWith(1, { [SHARED_TAB_IDS_KEY]: [2] });
+    expect(harness.session.set).toHaveBeenNthCalledWith(2, { [SHARED_TAB_IDS_KEY]: [2, 3] });
+    await expect(harness.controller.has(1)).resolves.toBe(false);
+    await expect(harness.controller.has(3)).resolves.toBe(true);
+  });
+
+  it("waits briefly for Arc to publish a selected replacement tab", async () => {
+    const harness = createHarness({ explicit: true });
+    harness.chromeApi.tabs.get
+      .mockRejectedValueOnce(new Error("replacement not ready"))
+      .mockResolvedValueOnce({ id: 3, windowId: 1, incognito: false });
+
+    await expect(harness.controller.replaceTab(3, 1)).resolves.toBe(true);
+
+    expect(harness.session.set).toHaveBeenNthCalledWith(1, { [SHARED_TAB_IDS_KEY]: [2] });
+    expect(harness.session.set).toHaveBeenNthCalledWith(2, { [SHARED_TAB_IDS_KEY]: [2, 3] });
     await expect(harness.controller.has(1)).resolves.toBe(false);
     await expect(harness.controller.has(3)).resolves.toBe(true);
   });
@@ -179,6 +194,7 @@ describe("personal shared-tab selection", () => {
 
     await expect(harness.controller.replaceTab(99, 1)).rejects.toThrow("No tab 99");
 
+    expect(harness.session.set).toHaveBeenCalledTimes(1);
     expect(harness.session.set).toHaveBeenCalledWith({ [SHARED_TAB_IDS_KEY]: [2] });
     await expect(harness.controller.has(1)).resolves.toBe(false);
   });
