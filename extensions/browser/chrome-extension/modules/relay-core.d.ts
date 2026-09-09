@@ -20,6 +20,7 @@ export function createPairingConfigStore(storage: {
     token: string;
     gatewayUrl: string;
     authVersion?: 2;
+    pairingSource?: "native" | "manual";
     connectionEnabled: boolean;
     scopeCleanupPending: boolean;
     accessMode: "all" | "selected";
@@ -30,6 +31,7 @@ export function createPairingConfigStore(storage: {
     pairing: { relayUrl: string; token: string; gatewayUrl?: string },
     groupColor: string,
     accessMode?: "all" | "selected",
+    source?: "native" | "manual",
   ): Promise<void>;
   setAccessMode(accessMode: unknown): Promise<"all" | "selected">;
   setConnectionEnabled(enabled: unknown): Promise<boolean>;

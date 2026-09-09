@@ -386,6 +386,144 @@ describe("native bootstrap timeout", () => {
   });
 });
 
+describe("native bootstrap cancellation", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("does not write ready after cancellation overtakes native pairing apply", async () => {
+    vi.stubGlobal("crypto", {
+      getRandomValues: vi.fn((bytes: Uint8Array) => {
+        bytes.fill(7);
+        return bytes;
+      }),
+    });
+    const stored: Record<string, unknown> = {};
+    let releaseApply = (_value: { ok: true }) => {};
+    const applyPairing = vi.fn(
+      async () =>
+        await new Promise<{ ok: true }>((resolve) => {
+          releaseApply = resolve;
+        }),
+    );
+    const chromeApi = {
+      runtime: {
+        connectNative: vi.fn(() => {
+          let messageListener = (_response: unknown) => {};
+          return {
+            disconnect: vi.fn(),
+            onDisconnect: { addListener: vi.fn() },
+            onMessage: {
+              addListener: (listener: (response: unknown) => void) => {
+                messageListener = listener;
+              },
+            },
+            postMessage: (request: { nonce: string }) => {
+              queueMicrotask(() =>
+                messageListener({
+                  v: 1,
+                  ok: true,
+                  nonce: request.nonce,
+                  pairingString: `ws://127.0.0.1:18789/browser/extension#${"a".repeat(64)}`,
+                }),
+              );
+            },
+          };
+        }),
+      },
+      storage: {
+        local: {
+          get: vi.fn(async (keys: string[]) =>
+            Object.fromEntries(
+              keys.filter((key) => Object.hasOwn(stored, key)).map((key) => [key, stored[key]]),
+            ),
+          ),
+          set: vi.fn(async (values: Record<string, unknown>) => {
+            Object.assign(stored, values);
+          }),
+          remove: vi.fn(async (keys: string[]) => {
+            for (const key of keys) {
+              delete stored[key];
+            }
+          }),
+        },
+      },
+    };
+    const controller = createNativeBootstrapController({
+      chromeApi,
+      getPairing: async () => null,
+      applyPairing,
+    });
+
+    const attempt = controller.attempt();
+    await vi.waitFor(() => expect(applyPairing).toHaveBeenCalledOnce());
+    const disabled = controller.disableSynchronously();
+    releaseApply({ ok: true });
+
+    await expect(attempt).resolves.toEqual({ status: "superseded" });
+    await disabled;
+    expect(stored).toMatchObject({
+      nativeBootstrapDisabled: true,
+      nativeBootstrapState: "disabled",
+    });
+  });
+
+  it("does not let an older status read restore disabled state after enable", async () => {
+    const stored: Record<string, unknown> = {
+      nativeBootstrapDisabled: true,
+      nativeBootstrapState: "disabled",
+    };
+    let releaseRead = () => {};
+    let deferRead = true;
+    const storageGet = vi.fn(async (keys: string[]) => {
+      const snapshot = Object.fromEntries(
+        keys.filter((key) => Object.hasOwn(stored, key)).map((key) => [key, stored[key]]),
+      );
+      if (deferRead) {
+        deferRead = false;
+        await new Promise<void>((resolve) => {
+          releaseRead = resolve;
+        });
+      }
+      return snapshot;
+    });
+    const chromeApi = {
+      runtime: {
+        connectNative: vi.fn(() => {
+          throw new Error("native bootstrap should not run for an existing pairing");
+        }),
+      },
+      storage: {
+        local: {
+          get: storageGet,
+          set: vi.fn(async (values: Record<string, unknown>) => {
+            Object.assign(stored, values);
+          }),
+          remove: vi.fn(async (keys: string[]) => {
+            for (const key of keys) {
+              delete stored[key];
+            }
+          }),
+        },
+      },
+    };
+    const controller = createNativeBootstrapController({
+      chromeApi,
+      getPairing: async () => ({ relayUrl: "ws://127.0.0.1:18789/browser/extension" }),
+      applyPairing: vi.fn(),
+    });
+
+    const staleStatus = controller.status();
+    await vi.waitFor(() => expect(storageGet).toHaveBeenCalledOnce());
+    await expect(controller.enable()).resolves.toEqual({ status: "existing" });
+    releaseRead();
+
+    await expect(staleStatus).resolves.toEqual({ disabled: false, state: "ready" });
+    await expect(controller.status()).resolves.toEqual({ disabled: false, state: "ready" });
+    expect(stored).toEqual({});
+  });
+});
+
 type EnsurePortScript = (request: { nonce: string }) => unknown;
 
 function ensureChromeApi(script: EnsurePortScript | "disconnect") {

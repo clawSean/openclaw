@@ -81,6 +81,9 @@ export async function loadBackground({
   let nextStorageGet: Promise<void> | null = null;
   let nextStorageRemove: Promise<void> | null = null;
   let nextStorageSet: Promise<void> | null = null;
+  let matchingStorageGet: { key: string; pending: Promise<void> } | null = null;
+  let matchingStorageSet: { expected: Record<string, unknown>; pending: Promise<void> } | null =
+    null;
   let nextSessionStorageSet: Promise<void> | null = null;
   let currentRetiredStorageFailureStage = retiredStorageFailureStage;
   let releaseTabAccessInitialization = () => {};
@@ -124,8 +127,15 @@ export async function loadBackground({
     if (keys.includes("copilotSessionRegistryV1")) {
       await retiredStatePreparation;
     }
-    const pending = nextStorageGet;
-    nextStorageGet = null;
+    const matching =
+      matchingStorageGet?.key && keys.includes(matchingStorageGet.key) ? matchingStorageGet : null;
+    if (matching) {
+      matchingStorageGet = null;
+    }
+    const pending = matching?.pending ?? nextStorageGet;
+    if (!matching) {
+      nextStorageGet = null;
+    }
     await pending;
     return Object.fromEntries(
       keys
@@ -134,8 +144,18 @@ export async function loadBackground({
     );
   });
   const storageSet = vi.fn(async (values: Record<string, unknown>) => {
-    const pending = nextStorageSet;
-    nextStorageSet = null;
+    const matching =
+      matchingStorageSet &&
+      Object.entries(matchingStorageSet.expected).every(([key, value]) => values[key] === value)
+        ? matchingStorageSet
+        : null;
+    if (matching) {
+      matchingStorageSet = null;
+    }
+    const pending = matching?.pending ?? nextStorageSet;
+    if (!matching) {
+      nextStorageSet = null;
+    }
     await pending;
     if (
       currentRetiredStorageFailureStage === "marker_set" &&
@@ -490,6 +510,16 @@ export async function loadBackground({
       });
       return release;
     },
+    deferStorageGetContaining: (key: string) => {
+      let release = () => {};
+      matchingStorageGet = {
+        key,
+        pending: new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+      };
+      return release;
+    },
     deferNextStorageRemove: () => {
       let release = () => {};
       nextStorageRemove = new Promise<void>((resolve) => {
@@ -509,6 +539,16 @@ export async function loadBackground({
       nextStorageSet = new Promise<void>((resolve) => {
         release = resolve;
       });
+      return release;
+    },
+    deferStorageSetMatching: (expected: Record<string, unknown>) => {
+      let release = () => {};
+      matchingStorageSet = {
+        expected,
+        pending: new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+      };
       return release;
     },
     get gatewaySockets() {
@@ -585,6 +625,7 @@ export async function loadBackground({
     setBadgeText,
     sockets,
     storageRemove,
+    storageGet,
     storageSet,
     storageValues,
     setRetiredStorageFailureStage: (stage?: RetiredStorageFailureStage) => {

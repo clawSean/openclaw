@@ -248,8 +248,13 @@ local setup** switch.
   new native bootstrap and standalone relay wake-up attempts.
 - **Disconnect and disable automatic setup** revokes the pairing immediately,
   detaches debugger sessions, and persists the opt-out.
-- **Use local OpenClaw** clears the opt-out and retries the native host.
-- Saving an explicit manual pairing also clears the opt-out.
+- **Use local OpenClaw** clears the opt-out and retries the native host when no
+  manual Gateway pairing is active.
+- Saving an explicit manual Gateway pairing makes it the connection authority
+  and disables automatic local setup. Forget that pairing before switching back
+  to **Use local OpenClaw**.
+- A standalone loopback `/extension` pairing may still use the native host only
+  to wake its local relay; this does not replace its manual pairing authority.
 
 Pre-release development installs that paired before local Gateway wakeup
 routing keep their existing pairing unchanged. In Settings, use **Disconnect

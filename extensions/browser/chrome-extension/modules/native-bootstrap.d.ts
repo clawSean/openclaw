@@ -40,6 +40,7 @@ export function createNativeBootstrapController(params: {
   }): Promise<{ ok?: boolean; existing?: boolean } | undefined>;
 }): {
   attempt(): Promise<NativeBootstrapResult>;
+  cancelAttemptSynchronously(): void;
   disableSynchronously(): Promise<void>;
   enable(options?: { attemptNow?: boolean }): Promise<NativeBootstrapResult>;
   status(): Promise<{ disabled: boolean; state: string; failureCode?: string }>;

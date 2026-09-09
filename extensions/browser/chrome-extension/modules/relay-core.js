@@ -9,6 +9,7 @@ export const ACCESS_MODE_SELECTED = "selected";
 const EXTENSION_RELAY_PROTOCOL = "openclaw-extension-relay.v2";
 const RELAY_SECRET_PATTERN = /^[0-9a-f]{64}$/;
 const PAIRING_STORAGE_KEYS = ["relayUrl", "gatewayUrl", "token", "authVersion"];
+const PAIRING_SOURCE_KEY = "pairingSource";
 const ACCESS_MODE_KEY = "accessMode";
 const CONNECTION_ENABLED_KEY = "connectionEnabled";
 const SCOPE_CLEANUP_PENDING_KEY = "scopeCleanupPending";
@@ -235,6 +236,28 @@ function parseStoredPairing(stored) {
   return parsed;
 }
 
+function inferLegacyPairingSource(pairing) {
+  try {
+    const relay = new URL(pairing.relayUrl);
+    // Native bootstrap never emits a direct non-loopback relay URL. A legacy
+    // remote pairing therefore has authoritative manual provenance.
+    if (!isLoopbackHost(relay.hostname)) {
+      return "manual";
+    }
+    // Standalone relay pairings still use the native host for wake-up, so their
+    // source does not lock automatic setup even when they were entered manually.
+    if (relay.pathname === "/extension") {
+      return "manual";
+    }
+  } catch {
+    return "manual";
+  }
+  // Local Gateway pairings are the one ambiguous legacy topology. Preserve
+  // automatic bootstrap and its independent opt-out; all newly saved pairings
+  // carry exact provenance.
+  return "native";
+}
+
 /** Own serialized validation and mutation at the extension pairing storage boundary. */
 export function createPairingConfigStore(storage) {
   let chain = Promise.resolve();
@@ -257,12 +280,14 @@ export function createPairingConfigStore(storage) {
           CONNECTION_ENABLED_KEY,
           SCOPE_CLEANUP_PENDING_KEY,
           PAIRING_STATUS_KEY,
+          PAIRING_SOURCE_KEY,
           "groupColor",
         ]);
         const hasPairing = PAIRING_STORAGE_KEYS.some((key) => Object.hasOwn(stored, key));
         const pairing = hasPairing ? parseStoredPairing(stored) : null;
         let connectionEnabled = false;
         let scopeCleanupPending = false;
+        let pairingSource;
         let pairingStatus =
           stored[PAIRING_STATUS_KEY] === UNSUPPORTED_PROXY_PREFIX_STATUS
             ? UNSUPPORTED_PROXY_PREFIX_STATUS
@@ -276,7 +301,12 @@ export function createPairingConfigStore(storage) {
             ? UNSUPPORTED_PROXY_PREFIX_STATUS
             : "";
           await storage
-            .remove([...PAIRING_STORAGE_KEYS, CONNECTION_ENABLED_KEY, SCOPE_CLEANUP_PENDING_KEY])
+            .remove([
+              ...PAIRING_STORAGE_KEYS,
+              PAIRING_SOURCE_KEY,
+              CONNECTION_ENABLED_KEY,
+              SCOPE_CLEANUP_PENDING_KEY,
+            ])
             .catch(() => undefined);
           if (pairingStatus) {
             await storage.set({ [PAIRING_STATUS_KEY]: pairingStatus }).catch(() => undefined);
@@ -287,6 +317,13 @@ export function createPairingConfigStore(storage) {
           invalidObserved = false;
           if (pairing) {
             const repairs = {};
+            pairingSource =
+              stored[PAIRING_SOURCE_KEY] === "native" || stored[PAIRING_SOURCE_KEY] === "manual"
+                ? stored[PAIRING_SOURCE_KEY]
+                : inferLegacyPairingSource(pairing);
+            if (stored[PAIRING_SOURCE_KEY] !== pairingSource) {
+              repairs[PAIRING_SOURCE_KEY] = pairingSource;
+            }
             const rawCleanupPending = stored[SCOPE_CLEANUP_PENDING_KEY];
             scopeCleanupPending =
               rawCleanupPending === true ||
@@ -339,6 +376,7 @@ export function createPairingConfigStore(storage) {
           token: pairing?.token ?? "",
           gatewayUrl: pairing?.gatewayUrl ?? "",
           authVersion: pairing ? 2 : undefined,
+          pairingSource: pairing ? pairingSource : undefined,
           connectionEnabled,
           scopeCleanupPending,
           accessMode: pairing
@@ -351,13 +389,14 @@ export function createPairingConfigStore(storage) {
             pairingStatus === UNSUPPORTED_PROXY_PREFIX_STATUS ? UNSUPPORTED_PROXY_PREFIX_HINT : "",
         };
       }),
-    save: (pairing, groupColor, accessMode = ACCESS_MODE_ALL) =>
+    save: (pairing, groupColor, accessMode = ACCESS_MODE_ALL, source = "manual") =>
       run(async () => {
         await storage.set({
           relayUrl: pairing.relayUrl,
           token: pairing.token,
           gatewayUrl: pairing.gatewayUrl ?? "",
           authVersion: 2,
+          [PAIRING_SOURCE_KEY]: source === "native" ? "native" : "manual",
           [CONNECTION_ENABLED_KEY]: true,
           [SCOPE_CLEANUP_PENDING_KEY]: false,
           accessMode: accessMode === ACCESS_MODE_SELECTED ? ACCESS_MODE_SELECTED : ACCESS_MODE_ALL,
@@ -415,6 +454,7 @@ export function createPairingConfigStore(storage) {
       run(() =>
         storage.remove([
           ...PAIRING_STORAGE_KEYS,
+          PAIRING_SOURCE_KEY,
           ACCESS_MODE_KEY,
           CONNECTION_ENABLED_KEY,
           SCOPE_CLEANUP_PENDING_KEY,

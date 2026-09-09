@@ -170,6 +170,7 @@ describe("persisted pairing storage", () => {
       authVersion: 2,
       accessMode: "selected",
       connectionEnabled: true,
+      pairingSource: "manual",
     });
     expect(config).toMatchObject({
       relayUrl: "ws://127.0.0.1:18797/extension",
@@ -177,6 +178,7 @@ describe("persisted pairing storage", () => {
       authVersion: 2,
       accessMode: "selected",
       connectionEnabled: true,
+      pairingSource: "manual",
     });
   });
 
@@ -195,10 +197,75 @@ describe("persisted pairing storage", () => {
 
     expect(stored.accessMode).toBe("all");
     expect(stored.connectionEnabled).toBe(true);
+    expect(stored.pairingSource).toBe("manual");
     await expect(store.read()).resolves.toMatchObject({
       accessMode: "all",
       connectionEnabled: true,
+      pairingSource: "manual",
     });
+  });
+
+  it("persists native pairing provenance without inferring from its Gateway URL", async () => {
+    const stored: Record<string, unknown> = {};
+    const store = createPairingConfigStore({
+      get: async () => stored,
+      set: async (values) => {
+        Object.assign(stored, values);
+      },
+      remove: async () => undefined,
+    });
+
+    await store.save(
+      {
+        relayUrl: "ws://127.0.0.1:18789/browser/extension",
+        token: RELAY_SECRET,
+      },
+      "orange",
+      "all",
+      "native",
+    );
+
+    await expect(store.read()).resolves.toMatchObject({ pairingSource: "native" });
+  });
+
+  it.each([
+    {
+      label: "a direct remote relay",
+      stored: {
+        relayUrl: "wss://gateway.example.com/browser/extension",
+        token: RELAY_SECRET,
+      },
+      source: "manual",
+    },
+    {
+      label: "an automatic local Gateway",
+      stored: {
+        relayUrl: "ws://127.0.0.1:18789/browser/extension",
+        token: RELAY_SECRET,
+      },
+      source: "native",
+    },
+    {
+      label: "an opted-out local Gateway",
+      stored: {
+        relayUrl: "ws://127.0.0.1:18789/browser/extension",
+        token: RELAY_SECRET,
+        nativeBootstrapDisabled: true,
+      },
+      source: "native",
+    },
+  ])("migrates legacy provenance for $label", async ({ stored, source }) => {
+    const mutable: Record<string, unknown> = { ...stored };
+    const store = createPairingConfigStore({
+      get: async () => mutable,
+      set: async (values) => {
+        Object.assign(mutable, values);
+      },
+      remove: async () => undefined,
+    });
+
+    await expect(store.read()).resolves.toMatchObject({ pairingSource: source });
+    expect(mutable.pairingSource).toBe(source);
   });
 
   it("persists an explicitly selected-tabs pairing", async () => {
@@ -232,7 +299,11 @@ describe("persisted pairing storage", () => {
     });
     const config = await createPairingConfigStore({ get: async () => stored, set, remove }).read();
     expect(config).toMatchObject({ accessMode: "selected", relayUrl: stored.relayUrl });
-    expect(set).toHaveBeenCalledWith({ accessMode: "selected", connectionEnabled: true });
+    expect(set).toHaveBeenCalledWith({
+      accessMode: "selected",
+      connectionEnabled: true,
+      pairingSource: "manual",
+    });
     expect(remove).not.toHaveBeenCalled();
   });
 
@@ -292,7 +363,10 @@ describe("persisted pairing storage", () => {
     }).read();
 
     expect(config.connectionEnabled).toBe(false);
-    expect(set).toHaveBeenCalledWith({ connectionEnabled: false });
+    expect(set).toHaveBeenCalledWith({
+      connectionEnabled: false,
+      pairingSource: "manual",
+    });
   });
 
   it("blocks reconnect until a failed one-tab handoff is completed", async () => {
@@ -343,6 +417,7 @@ describe("persisted pairing storage", () => {
       "gatewayUrl",
       "token",
       "authVersion",
+      "pairingSource",
       "accessMode",
       "connectionEnabled",
       "scopeCleanupPending",
@@ -368,6 +443,7 @@ describe("persisted pairing storage", () => {
       "gatewayUrl",
       "token",
       "authVersion",
+      "pairingSource",
       "connectionEnabled",
       "scopeCleanupPending",
     ]);
@@ -409,6 +485,7 @@ describe("persisted pairing storage", () => {
       "gatewayUrl",
       "token",
       "authVersion",
+      "pairingSource",
       "connectionEnabled",
       "scopeCleanupPending",
     ]);

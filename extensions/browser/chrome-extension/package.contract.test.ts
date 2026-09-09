@@ -51,7 +51,7 @@ describe("simplified Chrome extension package", () => {
     expect(manifest).toMatchObject({
       name: "OpenClaw Browser — Sean",
       short_name: "Sean Browser",
-      version: "2.3.0.2",
+      version: "2.3.0.3",
     });
     expect(options).toContain("Share only this tab");
     expect(options).not.toContain("tab group");
@@ -66,5 +66,21 @@ describe("simplified Chrome extension package", () => {
     expect(popup).toContain('status.state === "connecting"');
     expect(popup).toContain("TRANSIENT_REFRESH_WINDOW_MS");
     expect(popup).toContain("void refresh()");
+  });
+
+  it("live-refreshes settings and clears submitted pairing credentials", () => {
+    const options = fs.readFileSync(path.join(extensionDir, "options.js"), "utf8");
+    const html = fs.readFileSync(path.join(extensionDir, "options.html"), "utf8");
+
+    expect(options).toContain("STATUS_REFRESH_INTERVAL_MS");
+    expect(options).toContain("scheduleRefresh()");
+    expect(options).toContain("status?.ok === false");
+    expect(options).toContain("failControlsClosed()");
+    expect(options).toContain('window.addEventListener("focus"');
+    expect(options).toContain('pairingString.value = ""');
+    expect(html).toContain('id="pairingStatus"');
+    expect(html).toContain('id="connectionStatus"');
+    expect(html).toContain('id="accessStatus"');
+    expect(options).not.toContain("Paired; Sean relay unavailable");
   });
 });

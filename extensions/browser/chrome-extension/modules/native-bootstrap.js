@@ -120,19 +120,27 @@ export function createNativeBootstrapController({ chromeApi = chrome, getPairing
   let generation = 0;
 
   async function readState() {
-    const stored = await chromeApi.storage.local.get([DISABLED_KEY, STATE_KEY, FAILURE_KEY]);
-    disabledNow ||= stored[DISABLED_KEY] === true;
-    return {
-      disabled: disabledNow,
-      state:
-        stored[STATE_KEY] === "ready" ||
-        stored[STATE_KEY] === "retrying" ||
-        stored[STATE_KEY] === "manual_required" ||
-        stored[STATE_KEY] === "disabled"
-          ? stored[STATE_KEY]
-          : "waiting",
-      failureCode: typeof stored[FAILURE_KEY] === "string" ? stored[FAILURE_KEY] : "",
-    };
+    while (true) {
+      const readGeneration = generation;
+      const stored = await chromeApi.storage.local.get([DISABLED_KEY, STATE_KEY, FAILURE_KEY]);
+      // A status read started before a newer explicit enable/disable may return
+      // a stale storage snapshot. Re-read instead of restoring superseded state.
+      if (readGeneration !== generation) {
+        continue;
+      }
+      disabledNow ||= stored[DISABLED_KEY] === true;
+      return {
+        disabled: disabledNow,
+        state:
+          stored[STATE_KEY] === "ready" ||
+          stored[STATE_KEY] === "retrying" ||
+          stored[STATE_KEY] === "manual_required" ||
+          stored[STATE_KEY] === "disabled"
+            ? stored[STATE_KEY]
+            : "waiting",
+        failureCode: typeof stored[FAILURE_KEY] === "string" ? stored[FAILURE_KEY] : "",
+      };
+    }
   }
 
   async function writeState(state, failureCode = "") {
@@ -146,18 +154,24 @@ export function createNativeBootstrapController({ chromeApi = chrome, getPairing
   }
 
   async function attempt() {
-    if (inFlight) {
-      return await inFlight;
+    if (inFlight?.generation === generation) {
+      return await inFlight.promise;
     }
     const ownedGeneration = generation;
-    inFlight = (async () => {
+    const ownsAttempt = () => ownedGeneration === generation && !disabledNow;
+    const promise = (async () => {
       const pairing = await getPairing();
+      if (!ownsAttempt()) {
+        return { status: "superseded" };
+      }
       if (pairing?.relayUrl) {
-        await writeState("ready");
         return { status: "existing" };
       }
       const state = await readState();
-      if (disabledNow) {
+      if (!ownsAttempt()) {
+        return { status: "superseded" };
+      }
+      if (state.disabled) {
         return { status: "disabled" };
       }
       if (state.state === "manual_required") {
@@ -172,29 +186,38 @@ export function createNativeBootstrapController({ chromeApi = chrome, getPairing
           nonce,
         });
       } catch (error) {
+        if (!ownsAttempt()) {
+          return { status: "superseded" };
+        }
         if (error === NATIVE_MESSAGE_TIMEOUT || isHostMissing(error)) {
           const code = error === NATIVE_MESSAGE_TIMEOUT ? "native_host_timeout" : "host_not_found";
           await writeState("retrying", code);
-          return { status: "retrying", code };
+          return ownsAttempt() ? { status: "retrying", code } : { status: "superseded" };
         }
         await writeState("manual_required", "native_host_error");
-        return { status: "manual_required", code: "native_host_error" };
+        return ownsAttempt()
+          ? { status: "manual_required", code: "native_host_error" }
+          : { status: "superseded" };
       }
-      if (ownedGeneration !== generation || disabledNow) {
+      if (!ownsAttempt()) {
         return { status: "superseded" };
       }
       const parsed = nativeResponse(response, nonce);
       if (parsed.kind === "malformed") {
         await writeState("manual_required", "malformed_response");
-        return { status: "manual_required", code: "malformed_response" };
+        return ownsAttempt()
+          ? { status: "manual_required", code: "malformed_response" }
+          : { status: "superseded" };
       }
       if (parsed.kind === "failure") {
         const retrying = parsed.code === "pairing_unavailable";
         await writeState(retrying ? "retrying" : "manual_required", parsed.code);
-        return { status: retrying ? "retrying" : "manual_required", code: parsed.code };
+        return ownsAttempt()
+          ? { status: retrying ? "retrying" : "manual_required", code: parsed.code }
+          : { status: "superseded" };
       }
       const current = await getPairing();
-      if (current?.relayUrl || ownedGeneration !== generation || disabledNow) {
+      if (current?.relayUrl || !ownsAttempt()) {
         return { status: "superseded" };
       }
       const applied = await applyPairing({
@@ -204,23 +227,38 @@ export function createNativeBootstrapController({ chromeApi = chrome, getPairing
         generation: ownedGeneration,
       });
       if (!applied?.ok) {
+        if (!ownsAttempt()) {
+          return { status: "superseded" };
+        }
         if (applied?.existing) {
           return { status: "existing" };
         }
         await writeState("manual_required", "pairing_rejected");
-        return { status: "manual_required", code: "pairing_rejected" };
+        return ownsAttempt()
+          ? { status: "manual_required", code: "pairing_rejected" }
+          : { status: "superseded" };
+      }
+      if (!ownsAttempt()) {
+        return { status: "superseded" };
       }
       await writeState("ready");
-      return { status: "paired" };
+      return ownsAttempt() ? { status: "paired" } : { status: "superseded" };
     })().finally(() => {
-      inFlight = null;
+      if (inFlight?.promise === promise) {
+        inFlight = null;
+      }
     });
-    return await inFlight;
+    inFlight = { generation: ownedGeneration, promise };
+    return await promise;
+  }
+
+  function cancelAttemptSynchronously() {
+    generation += 1;
   }
 
   function disableSynchronously() {
     disabledNow = true;
-    generation += 1;
+    cancelAttemptSynchronously();
     return chromeApi.storage.local.set({
       [DISABLED_KEY]: true,
       [STATE_KEY]: "disabled",
@@ -229,7 +267,7 @@ export function createNativeBootstrapController({ chromeApi = chrome, getPairing
 
   async function enable({ attemptNow = true } = {}) {
     disabledNow = false;
-    generation += 1;
+    cancelAttemptSynchronously();
     await chromeApi.storage.local.remove([DISABLED_KEY, STATE_KEY, FAILURE_KEY]);
     return attemptNow ? await attempt() : { status: "enabled" };
   }
@@ -244,7 +282,7 @@ export function createNativeBootstrapController({ chromeApi = chrome, getPairing
     };
   }
 
-  return { attempt, disableSynchronously, enable, status };
+  return { attempt, cancelAttemptSynchronously, disableSynchronously, enable, status };
 }
 
 const COPILOT_LOCAL_KEYS = [

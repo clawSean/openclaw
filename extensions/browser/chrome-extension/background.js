@@ -52,6 +52,7 @@ let reconciledPairingInvalidationRevision = 0;
 let relayConnectionGeneration = 0;
 let relayConnectionsSuspended = false;
 let nativeBootstrap = null;
+let pairingAuthorityGeneration = 0;
 // Start blocked: no runtime path may outrun the retired-state storage read.
 let retiredCopilotCustodyBlocked = true;
 /** Debounce handle for tab-list refreshes. */
@@ -555,13 +556,29 @@ async function startAutomation() {
   if (retiredCopilotCustodyBlocked) {
     return;
   }
+  const authorityGeneration = pairingAuthorityGeneration;
   const config = await getConfig();
+  if (
+    config.pairingSource === "manual" &&
+    config.relayUrl &&
+    directLoopbackRelayPort(config.relayUrl) === null
+  ) {
+    const bootstrap = await nativeBootstrap.status();
+    if (authorityGeneration !== pairingAuthorityGeneration) {
+      return;
+    }
+    if (!bootstrap.disabled) {
+      await nativeBootstrap.disableSynchronously();
+    }
+  }
   if (config.relayUrl && !config.connectionEnabled) {
     closeRelaySocket();
     setBadge("off");
     return;
   }
-  await nativeBootstrap.attempt();
+  if (!config.relayUrl) {
+    await nativeBootstrap.attempt();
+  }
   await connectRelay();
 }
 
@@ -579,17 +596,56 @@ const handlePopupMessage = createPopupMessageHandler({
   getNativeBootstrapStatus: async () => {
     await tabAccessReady;
     const config = await getConfig();
-    if (!retiredCopilotCustodyBlocked && (!config.relayUrl || config.connectionEnabled)) {
-      await nativeBootstrap.attempt();
-    }
-    return await nativeBootstrap.status();
+    const automaticSetupLocked = Boolean(
+      config.pairingSource === "manual" &&
+      config.relayUrl &&
+      directLoopbackRelayPort(config.relayUrl) === null,
+    );
+    return { ...(await nativeBootstrap.status()), automaticSetupLocked };
   },
-  enableNativeBootstrap: async (enabled) => {
+  enableNativeBootstrap: async (enabled, isCurrent) => {
     await requireAutomationAllowed();
+    if (!isCurrent()) {
+      throw new Error("Automatic setup request was superseded by a newer pairing request.");
+    }
+    const config = await getConfig();
+    if (!isCurrent()) {
+      throw new Error("Automatic setup request was superseded by a newer pairing request.");
+    }
+    if (
+      enabled &&
+      config.pairingSource === "manual" &&
+      config.relayUrl &&
+      directLoopbackRelayPort(config.relayUrl) === null
+    ) {
+      throw new Error("Forget the manual pairing before using automatic local setup.");
+    }
+    if (!isCurrent()) {
+      throw new Error("Automatic setup request was superseded by a newer pairing request.");
+    }
     return enabled ? await nativeBootstrap.enable() : await nativeBootstrap.disableSynchronously();
   },
-  onManualPairing: () => nativeBootstrap.enable({ attemptNow: false }),
-  onUnpairStart: () => nativeBootstrap.disableSynchronously(),
+  onManualPairingStart: () => {
+    pairingAuthorityGeneration += 1;
+    return nativeBootstrap.disableSynchronously();
+  },
+  // A manually supplied Gateway pairing is its own connection authority. Keep
+  // local native bootstrap off until the operator explicitly chooses it again.
+  // Canonical standalone-loopback pairing re-enables only relay wake-up after
+  // the manual pairing transaction has committed.
+  onManualPairingCommitted: async (pairing, isCurrent) => {
+    if (directLoopbackRelayPort(pairing.relayUrl) === null || !isCurrent()) {
+      return;
+    }
+    await nativeBootstrap.enable({ attemptNow: false });
+    if (!isCurrent()) {
+      await nativeBootstrap.disableSynchronously();
+    }
+  },
+  onUnpairStart: () => {
+    pairingAuthorityGeneration += 1;
+    return nativeBootstrap.disableSynchronously();
+  },
   isRetiredCopilotCustodyBlocked: () => retiredCopilotCustodyBlocked,
   requireAutomationAllowed,
   discardRetiredCopilotCustody: async () => {

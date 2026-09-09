@@ -78,6 +78,23 @@
       .status {
         margin: 8px 0 0;
       }
+      .status-grid {
+        display: grid;
+        gap: 7px;
+        margin: 8px 0 12px;
+      }
+      .status-grid div {
+        display: grid;
+        grid-template-columns: 88px 1fr;
+        gap: 12px;
+      }
+      .status-grid dt {
+        color: #aeb5c0;
+      }
+      .status-grid dd {
+        margin: 0;
+        font-weight: 600;
+      }
       .hidden {
         display: none;
       }
@@ -86,7 +103,8 @@
   <body>
     <h1>Sean Browser Access</h1>
     <p class="muted">
-      The extension only relays browser automation. Pairing keys and URLs are never shown here.
+      The extension only relays browser automation. Saved pairing keys and URLs are not shown after
+      pairing.
     </p>
 
     <section id="retiredCustody" class="hidden">
@@ -101,7 +119,20 @@
 
     <section>
       <h2>Connection</h2>
-      <p id="connectionStatus" class="status">Checking…</p>
+      <dl class="status-grid">
+        <div>
+          <dt>Pairing</dt>
+          <dd id="pairingStatus">Checking…</dd>
+        </div>
+        <div>
+          <dt>Relay</dt>
+          <dd id="connectionStatus">Checking…</dd>
+        </div>
+        <div>
+          <dt>Access</dt>
+          <dd id="accessStatus">Checking…</dd>
+        </div>
+      </dl>
       <p id="bootstrapStatus" class="muted"></p>
       <label><input id="automaticSetup" type="checkbox" /> Use automatic local setup</label>
       <button id="useLocal" class="primary" type="button">Use local OpenClaw</button>
@@ -129,6 +160,7 @@
       </p>
       <textarea
         id="pairingString"
+        autocomplete="off"
         spellcheck="false"
         placeholder="Paste the pairing string"
       ></textarea>

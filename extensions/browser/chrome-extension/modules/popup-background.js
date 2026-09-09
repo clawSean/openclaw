@@ -21,7 +21,8 @@ export function createPopupMessageHandler({
   getRelayStatusHint,
   getNativeBootstrapStatus,
   enableNativeBootstrap,
-  onManualPairing,
+  onManualPairingStart,
+  onManualPairingCommitted,
   onUnpairStart,
   isRetiredCopilotCustodyBlocked,
   requireAutomationAllowed,
@@ -48,6 +49,7 @@ export function createPopupMessageHandler({
   pauseTab,
 }) {
   let pairingGeneration = 0;
+  let bootstrapControlGeneration = 0;
   let shareOnlyInFlight = false;
 
   const assertPairingCurrent = (generation) => {
@@ -57,32 +59,44 @@ export function createPopupMessageHandler({
   };
 
   async function applyPairing({ pairing, pairingString, accessMode, source = "manual" }) {
+    const parsed = pairing ?? parsePairingString(pairingString);
+    if (!parsed) {
+      return { ok: false, error: "Invalid pairing string." };
+    }
+    const generation = ++pairingGeneration;
+    const manualPairingGuard =
+      source === "manual"
+        ? // Disable native bootstrap synchronously, before the first await. The
+          // persisted write completes before the manual transaction continues.
+          onManualPairingStart()
+        : null;
+    await manualPairingGuard;
+    assertPairingCurrent(generation);
     await requireAutomationAllowed();
-    if ((await getConfig()).scopeCleanupPending) {
+    assertPairingCurrent(generation);
+    const initialConfig = await getConfig();
+    assertPairingCurrent(generation);
+    if (initialConfig.scopeCleanupPending) {
       return {
         ok: false,
         error: "Finish the one-tab handoff before changing the Sean pairing.",
       };
     }
-    const parsed = pairing ?? parsePairingString(pairingString);
-    if (!parsed) {
-      return { ok: false, error: "Invalid pairing string." };
-    }
-    if (source === "native" && (await getConfig()).relayUrl) {
+    if (source === "native" && initialConfig.relayUrl) {
       return { ok: false, existing: true };
     }
-    if (source === "manual") {
-      await onManualPairing();
-    }
-    const generation = ++pairingGeneration;
     suspendRelayConnections();
     closeRelaySocket();
     await accessReady;
     assertPairingCurrent(generation);
     await runAccessMutation(async () => {
       assertPairingCurrent(generation);
-      if (source === "native" && (await getConfig()).relayUrl) {
-        return;
+      if (source === "native") {
+        const currentConfig = await getConfig();
+        assertPairingCurrent(generation);
+        if (currentConfig.relayUrl) {
+          return;
+        }
       }
       suspendRelayConnections();
       closeRelaySocket();
@@ -94,7 +108,7 @@ export function createPopupMessageHandler({
         policy.beginTransition();
       }
       try {
-        await pairingConfigStore.save(parsed, nearestGroupColor(), normalizedMode);
+        await pairingConfigStore.save(parsed, nearestGroupColor(), normalizedMode, source);
         assertPairingCurrent(generation);
         await reconcileAccessMode(normalizedMode, { transitioning: downgrading });
         assertPairingCurrent(generation);
@@ -115,6 +129,11 @@ export function createPopupMessageHandler({
         assertPairingCurrent(generation);
       }
     });
+    if (source === "manual") {
+      assertPairingCurrent(generation);
+      await onManualPairingCommitted(parsed, () => generation === pairingGeneration);
+      assertPairingCurrent(generation);
+    }
     return { ok: true };
   }
 
@@ -408,7 +427,17 @@ export function createPopupMessageHandler({
               sendResponse({ ok: false, error: "Invalid automatic setup setting." });
               return;
             }
-            sendResponse({ ok: true, result: await enableNativeBootstrap(msg.enabled) });
+            {
+              const controlGeneration = ++bootstrapControlGeneration;
+              const pairingAtReceipt = pairingGeneration;
+              const isCurrent = () =>
+                controlGeneration === bootstrapControlGeneration &&
+                pairingAtReceipt === pairingGeneration;
+              sendResponse({
+                ok: true,
+                result: await enableNativeBootstrap(msg.enabled, isCurrent),
+              });
+            }
             return;
           case "setAccessMode": {
             if (shareOnlyInFlight) {
