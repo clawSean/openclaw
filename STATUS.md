@@ -2,8 +2,8 @@
 
 ## Current
 
-- Phase: `2.3.0.2` release candidate delivered privately; final remote-Mac
-  proof and public release remain.
+- Phase: `2.3.0.2` prerelease published; final remote-Mac proof and promotion
+  remain.
 - Base: OpenClaw `v2026.9.3` at
   `1391f7cd2d40ab5bbcf2f5f831d3a64f520e72d7`.
 - Branch: `personal/browser-extension-compat-v2026.9.3`.
@@ -25,8 +25,9 @@
   Gateway RPC, Telegram, iMessage, Nemo, and browser relay passed post-restart
   checks.
 - Candidate verification: archive integrity, package/archive parity, SHA-256,
-  and filesystem plus Git-history verified-secret scans pass locally. The `.2`
-  GitHub release and download-back proof remain pending.
+  and filesystem plus Git-history verified-secret scans pass. GitHub CI passed
+  on exact release commit `937dc3225dc6`; the prerelease assets were downloaded
+  back and matched their checksums and committed packages.
 
 ## Decisions
 
@@ -47,8 +48,8 @@
 1. Load `OpenClaw-Browser-Sean-Arc-Dia-2.3.0.2.zip` on the remote Mac.
 2. Prove connect, one-tab share, snapshot/control, disconnect to zero, and
    reconnect without re-pairing.
-3. Publish `v2.3.0-arc-dia.2`, wait for CI, download the release assets, and
-   verify their checksums and package parity.
+3. Promote the existing `v2.3.0-arc-dia.2` prerelease to final without changing
+   its verified assets.
 
 ## Known risks
 

@@ -14,8 +14,12 @@
 - Exact-head extension tests passed `613/613` with one opt-in upstream Chromium
   bootstrap skip. The `2.3.0.2` ZIP passed archive/package parity, SHA-256, and
   verified-secret scans and was sent privately for exact remote-Mac proof.
-- Public `.2` release is intentionally pending until the remote Mac proves the
+- Final `.2` promotion is intentionally pending until the remote Mac proves the
   corrected share/disconnect/reconnect flow.
+- Published `v2.3.0-arc-dia.2` as a GitHub prerelease at exact release commit
+  `937dc3225dc6`. Exact-head GitHub CI passed; all three assets were downloaded
+  back, their SHA-256 values passed, and both ZIPs matched their committed
+  package directories. Final promotion remains gated on the remote Arc proof.
 
 ## 2026-09-08
 
