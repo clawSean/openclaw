@@ -1,8 +1,8 @@
 # Browser compatibility evidence
 
-Candidate baseline: OpenClaw `v2026.9.3`, personalized extension `2.3.0.1`.
+Candidate baseline: OpenClaw `v2026.9.3`, personalized extension `2.3.0.2`.
 
-The final September 8 proof used disposable Arc and Dia profiles, the exact
+The September 8 `2.3.0.1` proof used disposable Arc and Dia profiles, the exact
 production build, and an isolated `2026.9.3` Gateway. Pairing targeted the direct
 `/browser/extension` Gateway route used by remote Tailscale deployments. Pairing
 material stayed in temporary files and is excluded from source and receipts.
@@ -25,14 +25,17 @@ material stayed in temporary files and is excluded from source and receipts.
 
 ## Compatibility conclusion
 
-Primary Arc and Dia functionality is satisfied on exact OpenClaw `2026.9.3`.
+Primary Arc and Dia functionality was satisfied by the `2.3.0.1` baseline on
+exact OpenClaw `2026.9.3`.
 The Sean build avoids Arc's hanging `chrome.tabGroups.query` path by using an
 explicit session-backed tab registry after the first Share action. **Share only
 this tab with Sean** atomically replaces the prior grant set. **Disconnect Sean
 (keep pairing)** publishes an empty inventory and detaches active sessions;
 **Reconnect Sean** restores the saved one-tab scope without another pairing code.
 
-The remaining blocker is deployment, not extension behavior: the live Gateway
-is still `2026.9.1` and needs separate approval to update/restart. Screenshot and
-one Dia click remain unclaimed because the proof host had no usable window
-geometry; they do not block the proven semantic and navigation control path.
+The live Gateway now runs exact OpenClaw `2026.9.3`. Candidate `2.3.0.2` fixes
+the handoff failures found on the first real remote Arc install and passes 613
+extension tests; exact remote-Mac confirmation is still required before final
+release. Screenshot and one Dia click remain unclaimed because the proof host
+had no usable window geometry; they do not block the proven semantic and
+navigation control path.
