@@ -37,6 +37,10 @@
   not call it. A no-display macOS session prevented meaningful screenshot proof
   and one below-fold Dia click; those are recorded as geometry limitations, not
   extension passes.
+- Published source commit `8f7aa9b3c933c58ae054665e721ca1c4e85f8029`
+  and release `v2.3.0-arc-dia.1`. Public CI, complete-history and filesystem
+  secret scans, archive/package parity, SHA-256 checksums, and downloaded asset
+  byte comparisons all passed.
 - All proof profiles, pairings, and Gateway state are disposable. The live
   `2026.9.1` Gateway and personal Arc/Dia profiles were not changed.
 

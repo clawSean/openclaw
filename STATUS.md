@@ -2,11 +2,13 @@
 
 ## Current
 
-- Phase: package and publish the OpenClaw `2026.9.3` Sean browser extension.
+- Phase: published; host rollout remains approval-gated.
 - Base: OpenClaw `v2026.9.3` at
   `1391f7cd2d40ab5bbcf2f5f831d3a64f520e72d7`.
 - Branch: `personal/browser-extension-compat-v2026.9.3`.
-- Candidate: `OpenClaw Browser — Sean` `2.3.0.1`.
+- Released: `OpenClaw Browser — Sean` `2.3.0.1` at
+  [`v2.3.0-arc-dia.1`](https://github.com/clawSean/openclaw-arc-dia-browser-extension/releases/tag/v2.3.0-arc-dia.1).
+- Artifact source commit: `8f7aa9b3c933c58ae054665e721ca1c4e85f8029`.
 - Exact-head extension suite: `611 passed`, `1` upstream opt-in Chromium
   bootstrap test skipped.
 - Full production build: passed on Node `26.7.0`.
@@ -17,6 +19,9 @@
 - Live installation: unchanged on `2026.9.1`. The `2026.9.3` proof Gateway was
   isolated on port `19931`; no live Gateway, personal browser profile, or global
   OpenClaw package was changed.
+- Release verification: public CI passed; final filesystem and Git-history
+  secret scans reported zero verified secrets; downloaded release assets
+  matched the committed packages and SHA-256 checksums.
 
 ## Decisions
 
