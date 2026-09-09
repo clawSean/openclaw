@@ -1,7 +1,9 @@
 const statusLine = document.getElementById("status");
 const pairedDetails = document.getElementById("pairedDetails");
 const accessMode = document.getElementById("accessMode");
+const shareOnly = document.getElementById("shareOnly");
 const tabAction = document.getElementById("tabAction");
+const connectionAction = document.getElementById("connectionAction");
 const settings = document.getElementById("settings");
 const errorLine = document.getElementById("error");
 
@@ -29,27 +31,59 @@ async function refresh() {
   pairedDetails.classList.toggle("hidden", !status.paired);
   if (status.retiredCopilotCustodyBlocked === true) {
     statusLine.textContent = "Automation paused; open Settings";
+    shareOnly.classList.add("hidden");
     tabAction.classList.add("hidden");
+    connectionAction.classList.add("hidden");
     return;
   }
   if (!status.paired) {
     statusLine.textContent = unpairedLabel(status.nativeBootstrap);
+    shareOnly.classList.add("hidden");
     tabAction.classList.add("hidden");
+    connectionAction.classList.add("hidden");
     return;
   }
-  statusLine.textContent =
-    status.state === "on"
-      ? "Connected"
-      : status.state === "connecting"
-        ? "Connecting…"
-        : "OpenClaw relay unavailable";
+  statusLine.textContent = status.scopeCleanupPending
+    ? "Tab handoff incomplete — Sean disconnected"
+    : !status.connectionEnabled
+      ? "Disconnected — pairing saved"
+      : status.state === "on"
+        ? "Connected to Sean"
+        : status.state === "connecting"
+          ? "Connecting to Sean…"
+          : "Sean relay unavailable";
   accessMode.textContent = status.accessMode === "selected" ? "Selected tabs" : "All tabs";
+  connectionAction.classList.toggle("hidden", status.scopeCleanupPending === true);
+  connectionAction.classList.remove("primary", "danger");
+  connectionAction.textContent = status.connectionEnabled
+    ? "Disconnect Sean (keep pairing)"
+    : "Reconnect Sean";
+  connectionAction.classList.add(status.connectionEnabled ? "danger" : "primary");
+  connectionAction.dataset.enable = String(!status.connectionEnabled);
+  if (!status.connectionEnabled) {
+    tabAction.classList.add("hidden");
+    if (!status.scopeCleanupPending) {
+      shareOnly.classList.add("hidden");
+      return;
+    }
+    const tab = await activeTab();
+    if (tab?.id === undefined) {
+      shareOnly.classList.add("hidden");
+      return;
+    }
+    shareOnly.classList.remove("hidden");
+    shareOnly.dataset.tabId = String(tab.id);
+    return;
+  }
   const tab = await activeTab();
   if (tab?.id === undefined) {
+    shareOnly.classList.add("hidden");
     tabAction.classList.add("hidden");
     return;
   }
   const access = await chrome.runtime.sendMessage({ type: "getTabAccess", tabId: tab.id });
+  shareOnly.classList.toggle("hidden", !access.eligible);
+  shareOnly.dataset.tabId = String(tab.id);
   tabAction.classList.toggle("hidden", !access.eligible);
   tabAction.textContent = access.accessible ? "Pause on this tab" : "Allow on this tab";
   tabAction.dataset.tabId = String(tab.id);
@@ -57,23 +91,38 @@ async function refresh() {
   tabAction.dataset.grant = String(!access.accessible);
 }
 
-async function toggleActiveTabAccess() {
+async function runAction(message) {
   errorLine.classList.add("hidden");
-  const result = await chrome.runtime.sendMessage({
-    type: "toggleTabAccess",
-    tabId: Number(tabAction.dataset.tabId),
-    accessMode: tabAction.dataset.mode,
-    grant: tabAction.dataset.grant === "true",
-  });
-  if (!result?.ok) {
-    errorLine.textContent = result?.error ?? "Could not update tab access.";
+  try {
+    const result = await chrome.runtime.sendMessage(message);
+    if (!result?.ok) {
+      throw new Error(result?.error ?? "Could not update tab access.");
+    }
+  } catch (error) {
+    errorLine.textContent = error instanceof Error ? error.message : String(error);
     errorLine.classList.remove("hidden");
   }
   await refresh();
 }
 
 tabAction.addEventListener("click", () => {
-  void toggleActiveTabAccess();
+  void runAction({
+    type: "toggleTabAccess",
+    tabId: Number(tabAction.dataset.tabId),
+    accessMode: tabAction.dataset.mode,
+    grant: tabAction.dataset.grant === "true",
+  });
+});
+
+shareOnly.addEventListener("click", () => {
+  void runAction({ type: "shareOnlyTab", tabId: Number(shareOnly.dataset.tabId) });
+});
+
+connectionAction.addEventListener("click", () => {
+  void runAction({
+    type: "setConnectionEnabled",
+    enabled: connectionAction.dataset.enable === "true",
+  });
 });
 
 settings.addEventListener("click", () => chrome.runtime.openOptionsPage());

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenClaw</title>
+    <title>Sean Browser Access</title>
     <style>
       :root {
         color-scheme: light dark;
@@ -12,7 +12,7 @@
           sans-serif;
       }
       body {
-        width: 280px;
+        width: 300px;
         margin: 0;
         padding: 16px;
         background: #17191d;
@@ -60,10 +60,20 @@
         font: inherit;
         cursor: pointer;
       }
-      #tabAction {
+      #shareOnly,
+      #connectionAction.primary {
         background: #ff5a36;
         color: white;
         font-weight: 600;
+      }
+      #tabAction {
+        background: transparent;
+        color: #cbd2dc;
+        border: 1px solid #40464f;
+      }
+      #connectionAction.danger {
+        background: #633128;
+        color: white;
       }
       #settings {
         background: transparent;
@@ -82,13 +92,15 @@
   <body>
     <header>
       <img src="icons/icon32.png" alt="" />
-      <h1>OpenClaw Browser</h1>
+      <h1>Sean Browser Access</h1>
     </header>
     <main class="card">
       <p id="status">Checking connection…</p>
       <div id="pairedDetails" class="hidden">
         <div class="row"><span class="muted">Access</span><span id="accessMode">—</span></div>
+        <button id="shareOnly" type="button" class="hidden">Share only this tab with Sean</button>
         <button id="tabAction" type="button" class="hidden"></button>
+        <button id="connectionAction" type="button" class="hidden"></button>
       </div>
       <p id="error" class="hidden"></p>
       <button id="settings" type="button">Settings</button>

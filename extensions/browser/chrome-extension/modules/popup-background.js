@@ -4,8 +4,7 @@ import {
   nearestGroupColor,
   parsePairingString,
 } from "./relay-core.js";
-import { isTabSelected } from "./relay-tab-groups.js";
-import { isValidTabId } from "./tab-eligibility.js";
+import { isValidTabId, tabEligibility } from "./tab-eligibility.js";
 
 function errorResponse(sendResponse, error) {
   sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
@@ -34,17 +33,22 @@ export function createPopupMessageHandler({
   reconcileAccessMode,
   runAccessMutation,
   detachAllDebuggerSessions,
+  clearRelayTabs,
   syncTabsToRelay,
   closeRelaySocket,
   connectRelay,
   setBadge,
   detachDebugger,
-  removeTabFromOpenClawGroup,
-  addTabToOpenClawGroup,
+  isTabSelected,
+  removeTabFromSelectedScope,
+  addTabToSelectedScope,
+  replaceSelectedScope,
+  clearSelectedScope,
   scheduleTabsSync,
   pauseTab,
 }) {
   let pairingGeneration = 0;
+  let shareOnlyInFlight = false;
 
   const assertPairingCurrent = (generation) => {
     if (generation !== pairingGeneration) {
@@ -54,6 +58,12 @@ export function createPopupMessageHandler({
 
   async function applyPairing({ pairing, pairingString, accessMode, source = "manual" }) {
     await requireAutomationAllowed();
+    if ((await getConfig()).scopeCleanupPending) {
+      return {
+        ok: false,
+        error: "Finish the one-tab handoff before changing the Sean pairing.",
+      };
+    }
     const parsed = pairing ?? parsePairingString(pairingString);
     if (!parsed) {
       return { ok: false, error: "Invalid pairing string." };
@@ -113,6 +123,7 @@ export function createPopupMessageHandler({
     const disabledPersisted = onUnpairStart();
     policy.setEnabled(false);
     policy.invalidateAll();
+    clearRelayTabs();
     suspendRelayConnections();
     resetRelayState();
     closeRelaySocket();
@@ -125,10 +136,10 @@ export function createPopupMessageHandler({
     await runAccessMutation(async () => {
       policy.setEnabled(false);
       const detaching = detachAllDebuggerSessions();
-      await syncTabsToRelay();
       await disabledPersisted;
       await pairingConfigStore.clear();
       await policy.clearDenied();
+      await clearSelectedScope();
       await detaching;
       await discardRetiredCopilotCustody();
       resetRelayState();
@@ -136,6 +147,204 @@ export function createPopupMessageHandler({
       setBadge("off");
     });
     return { ok: true };
+  }
+
+  async function setConnectionEnabled(enabled) {
+    await accessReady;
+    await requireAutomationAllowed();
+    const config = await getConfig();
+    if (!config.relayUrl) {
+      return { ok: false, error: "Pair the extension first." };
+    }
+    const generation = ++pairingGeneration;
+
+    if (!enabled) {
+      // Revoke in memory immediately, then persist the disconnected state before
+      // closing. If MV3 stops this worker mid-operation, startup stays fail-closed.
+      policy.setEnabled(false);
+      policy.invalidateAll();
+      suspendRelayConnections();
+      setBadge("off");
+      await runAccessMutation(async () => {
+        let firstError;
+        try {
+          await pairingConfigStore.setConnectionEnabled(false);
+        } catch (error) {
+          firstError = error;
+        }
+        // The relay treats this full tab list as authoritative. Publish the empty
+        // inventory before closing so it cannot retain stale tab descriptors.
+        clearRelayTabs();
+        resetRelayState();
+        closeRelaySocket();
+        try {
+          await detachAllDebuggerSessions();
+        } catch (error) {
+          firstError ??= error;
+        } finally {
+          closeRelaySocket();
+          setBadge("off");
+        }
+        if (firstError) {
+          throw firstError;
+        }
+      });
+      return { ok: true, connectionEnabled: false };
+    }
+
+    suspendRelayConnections();
+    policy.setEnabled(false);
+    policy.invalidateAll();
+    closeRelaySocket();
+    await runAccessMutation(async () => {
+      await pairingConfigStore.setConnectionEnabled(true);
+      assertPairingCurrent(generation);
+      policy.setEnabled(true);
+      resetRelayState();
+      resumeRelayConnections();
+      await connectRelay(() => generation === pairingGeneration);
+      assertPairingCurrent(generation);
+    });
+    return { ok: true, connectionEnabled: true };
+  }
+
+  async function shareOnlyTab(tabId) {
+    if (!isValidTabId(tabId)) {
+      return { ok: false, error: "Invalid tab access action." };
+    }
+    if (shareOnlyInFlight) {
+      return { ok: false, error: "A tab handoff is already in progress." };
+    }
+    shareOnlyInFlight = true;
+    let transitionOpen = false;
+    const endTransition = () => {
+      if (!transitionOpen) return;
+      transitionOpen = false;
+      policy.endTransition();
+    };
+    try {
+      await accessReady;
+      await requireAutomationAllowed();
+      const config = await getConfig();
+      if (!config.relayUrl) {
+        return { ok: false, error: "Pair the extension first." };
+      }
+      if (!config.connectionEnabled && !config.scopeCleanupPending) {
+        return { ok: false, error: "Reconnect Sean before sharing a tab." };
+      }
+      // Read eligibility independently from policy state so a failed handoff
+      // can be retried while the access policy remains disabled.
+      const preliminary = await chromeApi.tabs.get(tabId);
+      let preliminaryFileAccessAllowed = false;
+      try {
+        preliminaryFileAccessAllowed =
+          (await chromeApi.extension?.isAllowedFileSchemeAccess?.()) === true;
+      } catch {
+        preliminaryFileAccessAllowed = false;
+      }
+      if (
+        !tabEligibility(preliminary, { fileAccessAllowed: preliminaryFileAccessAllowed }).eligible
+      ) {
+        return { ok: false, error: "This tab cannot be shared with Sean." };
+      }
+
+      const generation = ++pairingGeneration;
+      policy.beginTransition();
+      transitionOpen = true;
+      return await runAccessMutation(async () => {
+        let revocationStarted = false;
+        try {
+          const currentConfig = await getConfig();
+          assertPairingCurrent(generation);
+          if (
+            !currentConfig.relayUrl ||
+            (!currentConfig.connectionEnabled && !currentConfig.scopeCleanupPending)
+          ) {
+            throw new Error("Reconnect Sean before sharing a tab.");
+          }
+          const currentBefore = await chromeApi.tabs.get(tabId);
+          let fileAccessAllowed = false;
+          try {
+            fileAccessAllowed = (await chromeApi.extension?.isAllowedFileSchemeAccess?.()) === true;
+          } catch {
+            fileAccessAllowed = false;
+          }
+          if (!tabEligibility(currentBefore, { fileAccessAllowed }).eligible) {
+            throw new Error("This tab cannot be shared with Sean.");
+          }
+
+          // Hold the durable state disconnected for the whole ACL rewrite. If
+          // the worker is stopped mid-operation, startup remains fail-closed.
+          policy.setEnabled(false);
+          policy.invalidateAll();
+          suspendRelayConnections();
+          revocationStarted = true;
+          await pairingConfigStore.beginShareOnly();
+          assertPairingCurrent(generation);
+          clearRelayTabs();
+          closeRelaySocket();
+          setBadge("off");
+          await policy.waitForPendingCreations();
+          await detachAllDebuggerSessions();
+          assertPairingCurrent(generation);
+
+          if (policy.isDenied(tabId)) {
+            await policy.allow(tabId);
+          }
+          policy.setMode(ACCESS_MODE_SELECTED);
+          await replaceSelectedScope(tabId);
+          policy.invalidateAll();
+          assertPairingCurrent(generation);
+          const current = await chromeApi.tabs.get(tabId);
+          const remaining = [];
+          for (const tab of await chromeApi.tabs.query({})) {
+            if (isValidTabId(tab.id) && tab.id !== tabId && (await isTabSelected(tab))) {
+              remaining.push(tab.id);
+            }
+          }
+          if (
+            !tabEligibility(current, { fileAccessAllowed }).eligible ||
+            !(await isTabSelected(current)) ||
+            remaining.length > 0
+          ) {
+            throw new Error("Could not restrict Sean to only this tab.");
+          }
+          await pairingConfigStore.completeShareOnly();
+          assertPairingCurrent(generation);
+          endTransition();
+          policy.setEnabled(true);
+          resetRelayState();
+          resumeRelayConnections();
+          await connectRelay(() => generation === pairingGeneration);
+          assertPairingCurrent(generation);
+          return { ok: true, accessMode: ACCESS_MODE_SELECTED, tabId };
+        } catch (error) {
+          endTransition();
+          if (!revocationStarted) {
+            throw error;
+          }
+          policy.setEnabled(false);
+          policy.invalidateAll();
+          clearRelayTabs();
+          suspendRelayConnections();
+          closeRelaySocket();
+          setBadge("off");
+          const pausePersisted = await pairingConfigStore
+            .setConnectionEnabled(false)
+            .then(() => true)
+            .catch(() => false);
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            pausePersisted
+              ? `${reason} Sean was disconnected; pairing was kept.`
+              : `${reason} Sean is disconnected for now, but the pause could not be saved.`,
+          );
+        }
+      });
+    } finally {
+      endTransition();
+      shareOnlyInFlight = false;
+    }
   }
 
   const handler = (msg, reply) => {
@@ -153,12 +362,15 @@ export function createPopupMessageHandler({
             await accessReady;
             const retiredCopilotCustodyBlocked = isRetiredCopilotCustodyBlocked();
             const nativeBootstrap = await getNativeBootstrapStatus();
-            const { relayUrl, accessMode } = await getConfig();
+            const { relayUrl, accessMode, connectionEnabled, scopeCleanupPending } =
+              await getConfig();
             await reconcilePairingInvalidation();
             const accessible = await policy.listAccessibleTabs();
             const hint = getRelayStatusHint();
             sendResponse({
               paired: Boolean(relayUrl),
+              connectionEnabled,
+              scopeCleanupPending,
               state: getRelayState(),
               accessMode,
               accessibleTabCount: accessible.length,
@@ -181,6 +393,16 @@ export function createPopupMessageHandler({
           case "unpair":
             sendResponse(await unpair());
             return;
+          case "setConnectionEnabled":
+            if (typeof msg.enabled !== "boolean") {
+              sendResponse({ ok: false, error: "Invalid connection setting." });
+              return;
+            }
+            sendResponse(await setConnectionEnabled(msg.enabled));
+            return;
+          case "shareOnlyTab":
+            sendResponse(await shareOnlyTab(msg.tabId));
+            return;
           case "setNativeBootstrapEnabled":
             if (typeof msg.enabled !== "boolean") {
               sendResponse({ ok: false, error: "Invalid automatic setup setting." });
@@ -189,17 +411,31 @@ export function createPopupMessageHandler({
             sendResponse({ ok: true, result: await enableNativeBootstrap(msg.enabled) });
             return;
           case "setAccessMode": {
+            if (shareOnlyInFlight) {
+              sendResponse({ ok: false, error: "A tab handoff is already in progress." });
+              return;
+            }
             if (msg.accessMode !== ACCESS_MODE_ALL && msg.accessMode !== ACCESS_MODE_SELECTED) {
               sendResponse({ ok: false, error: "Invalid access mode." });
               return;
             }
-            await requireAutomationAllowed();
             const restricting = msg.accessMode === ACCESS_MODE_SELECTED;
             if (restricting) {
               policy.beginTransition();
             }
             let storedMode;
             try {
+              if ((await getConfig()).scopeCleanupPending) {
+                if (restricting) {
+                  policy.endTransition();
+                }
+                sendResponse({
+                  ok: false,
+                  error: "Finish the one-tab handoff before changing access mode.",
+                });
+                return;
+              }
+              await requireAutomationAllowed();
               await accessReady;
               storedMode = await runAccessMutation(async () => {
                 const mode = await pairingConfigStore.setAccessMode(msg.accessMode);
@@ -216,6 +452,10 @@ export function createPopupMessageHandler({
             return;
           }
           case "toggleTabAccess": {
+            if (shareOnlyInFlight) {
+              sendResponse({ ok: false, error: "A tab handoff is already in progress." });
+              return;
+            }
             const tabId = msg.tabId;
             if (
               !isValidTabId(tabId) ||
@@ -233,6 +473,13 @@ export function createPopupMessageHandler({
             }
             const revocation = policy.beginRevocation(tabId);
             try {
+              if ((await getConfig()).scopeCleanupPending) {
+                sendResponse({
+                  ok: false,
+                  error: "Finish the one-tab handoff before changing tab access.",
+                });
+                return;
+              }
               await runAccessMutation(async () => {
                 if (policy.mode !== msg.accessMode) {
                   throw new Error("Browser access mode changed. Refresh and retry.");
@@ -248,10 +495,10 @@ export function createPopupMessageHandler({
                   if (!msg.grant && selected) {
                     policy.invalidateTab(tabId);
                     await detachDebugger(tabId);
-                    await removeTabFromOpenClawGroup(tabId);
+                    await removeTabFromSelectedScope(tabId);
                   } else if (msg.grant && !selected) {
                     policy.invalidateTab(tabId);
-                    await addTabToOpenClawGroup(tabId);
+                    await addTabToSelectedScope(tabId);
                   }
                 }
                 scheduleTabsSync();

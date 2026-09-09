@@ -1,3 +1,5 @@
+import { authorizeCdpCommand, sanitizeCdpResult } from "./credential-firewall.js";
+
 /** Build the authenticated application-command dispatcher for the relay socket. */
 export function createRelayCommandHandler({
   send,
@@ -47,8 +49,9 @@ export function createRelayCommandHandler({
           reply({ type: "result", seq, result: {} });
           return;
         case "cdp": {
+          const authorized = authorizeCdpCommand(message.method, message.params ?? {});
           const assertAttachment = captureDebugger(message.tabId);
-          const epoch = captureAccess(message.tabId, message.method);
+          const epoch = captureAccess(message.tabId, authorized.method);
           await requireTab(message.tabId, epoch);
           assertAttachment();
           const target = message.sessionId
@@ -64,11 +67,11 @@ export function createRelayCommandHandler({
           };
           const controlledBlank =
             !message.sessionId &&
-            message.method === "Page.navigate" &&
-            message.params?.url === "about:blank";
+            authorized.method === "Page.navigate" &&
+            authorized.params?.url === "about:blank";
           const result = controlledBlank
-            ? await navigateTab(message.tabId, epoch, message.params, isCurrent, sendCommand)
-            : await sendCommand(message.method, message.params ?? {});
+            ? await navigateTab(message.tabId, epoch, authorized.params, isCurrent, sendCommand)
+            : await sendCommand(authorized.method, authorized.params);
           assertAttachment();
           await requireTab(
             message.tabId,
@@ -76,7 +79,7 @@ export function createRelayCommandHandler({
             controlledBlank ? requireNavigatedTab : requireAccessibleTab,
           );
           assertAttachment();
-          reply({ type: "result", seq, result: result ?? {} });
+          reply({ type: "result", seq, result: sanitizeCdpResult(authorized.method, result) });
           return;
         }
         case "createTab": {

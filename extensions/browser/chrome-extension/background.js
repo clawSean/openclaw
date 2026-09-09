@@ -12,8 +12,8 @@ import { openAuthenticatedRelaySocket } from "./modules/relay-connection.js";
 // Thin transport between the OpenClaw extension relay (loopback WebSocket) and
 // chrome.debugger. All CDP target synthesis lives server-side in the relay
 // bridge; this worker owns tab eligibility/access and forwards allowed frames.
-// The OpenClaw tab group is the ACL in selected mode and an ownership marker
-// in all-tabs mode.
+// Selected mode uses upstream tab groups until the personal Arc/Dia popup
+// activates its explicit session-scoped tab ledger.
 import {
   ACCESS_MODE_SELECTED,
   createPairingConfigStore,
@@ -22,7 +22,7 @@ import {
   toRelayTabInfo,
 } from "./modules/relay-core.js";
 import { createRelayDebugger } from "./modules/relay-debugger.js";
-import { isTabSelected } from "./modules/relay-tab-groups.js";
+import { createSharedTabsController } from "./modules/shared-tabs.js";
 import { registerTabAccessEvents } from "./modules/tab-access-events.js";
 import { createTabAccessPolicy } from "./modules/tab-access.js";
 
@@ -58,8 +58,12 @@ let retiredCopilotCustodyBlocked = true;
 let tabsSyncTimer = null;
 let accessMutationChain = Promise.resolve();
 const pairingConfigStore = createPairingConfigStore(chrome.storage.local);
+const sharedTabs = createSharedTabsController({
+  getGroupColor: async () => (await getConfig()).groupColor,
+});
 const tabAccessPolicy = createTabAccessPolicy({
-  isSelectedTab: isTabSelected,
+  isSelectedTab: (tab) => sharedTabs.isSelected(tab),
+  addSelectedTab: (tabId, created) => sharedTabs.add(tabId, created),
   getGroupColor: async () => (await getConfig()).groupColor,
 });
 const relayDebugger = createRelayDebugger({ policy: tabAccessPolicy, requireAutomationAllowed });
@@ -70,7 +74,7 @@ const tabAccessReady = (async () => {
   const config = await pairingConfigStore.read();
   await tabAccessPolicy.initialize(
     config.accessMode,
-    Boolean(config.relayUrl) && !retiredCopilotCustodyBlocked,
+    Boolean(config.relayUrl) && config.connectionEnabled && !retiredCopilotCustodyBlocked,
   );
   if (retiredCopilotCustodyBlocked) {
     tabAccessPolicy.setEnabled(false);
@@ -142,7 +146,7 @@ function setBadge(kind) {
 async function getConfig() {
   await tabAccessReady;
   const config = await pairingConfigStore.read();
-  if (retiredCopilotCustodyBlocked || !config.relayUrl) {
+  if (retiredCopilotCustodyBlocked || !config.relayUrl || !config.connectionEnabled) {
     tabAccessPolicy.setEnabled(false);
   }
   if (config.pairingStatusHint) {
@@ -158,7 +162,9 @@ function runAccessMutation(task) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab group management (selected-mode ACL; all-mode ownership marker)
+// Selected-tab management. The personal Arc/Dia path switches to an explicit
+// session ledger after its first popup share; untouched upstream installs keep
+// their tab-group behavior until then.
 // ---------------------------------------------------------------------------
 
 async function focusWindowForTab(tab) {
@@ -167,13 +173,9 @@ async function focusWindowForTab(tab) {
   }
 }
 
-async function removeTabFromOpenClawGroup(tabId) {
-  try {
-    await chrome.tabs.ungroup([tabId]);
-  } catch {
-    // tab may already be gone
-  }
-}
+const removeTabFromSelectedScope = (tabId) => sharedTabs.remove(tabId);
+const replaceTabInSelectedScope = (addedTabId, removedTabId) =>
+  sharedTabs.replaceTab(addedTabId, removedTabId);
 
 function scheduleTabsSync() {
   if (tabsSyncTimer) {
@@ -381,7 +383,7 @@ async function connectRelay(isConnectionAllowed = () => true) {
     !relayConnectionsSuspended &&
     connectionGeneration === relayConnectionGeneration &&
     isConnectionAllowed();
-  const { relayUrl, token } = await getConfig();
+  const { relayUrl, token, connectionEnabled } = await getConfig();
   if (!connectionIsCurrent()) {
     return;
   }
@@ -389,7 +391,7 @@ async function connectRelay(isConnectionAllowed = () => true) {
   if (!connectionIsCurrent()) {
     return;
   }
-  if (!relayUrl || !token) {
+  if (!relayUrl || !token || !connectionEnabled) {
     clearRelayOpeningDeadline();
     setBadge("off");
     return;
@@ -553,6 +555,12 @@ async function startAutomation() {
   if (retiredCopilotCustodyBlocked) {
     return;
   }
+  const config = await getConfig();
+  if (config.relayUrl && !config.connectionEnabled) {
+    closeRelaySocket();
+    setBadge("off");
+    return;
+  }
   await nativeBootstrap.attempt();
   await connectRelay();
 }
@@ -570,7 +578,8 @@ const handlePopupMessage = createPopupMessageHandler({
   getRelayStatusHint: () => relayStatusHint,
   getNativeBootstrapStatus: async () => {
     await tabAccessReady;
-    if (!retiredCopilotCustodyBlocked) {
+    const config = await getConfig();
+    if (!retiredCopilotCustodyBlocked && (!config.relayUrl || config.connectionEnabled)) {
       await nativeBootstrap.attempt();
     }
     return await nativeBootstrap.status();
@@ -600,13 +609,17 @@ const handlePopupMessage = createPopupMessageHandler({
   reconcileAccessMode,
   runAccessMutation,
   detachAllDebuggerSessions,
+  clearRelayTabs: () => send({ type: "tabs", tabs: [] }),
   syncTabsToRelay,
   closeRelaySocket,
   connectRelay,
   setBadge,
   detachDebugger,
-  removeTabFromOpenClawGroup,
-  addTabToOpenClawGroup: (tabId) => tabAccessPolicy.addTabToGroup(tabId),
+  isTabSelected: (tab) => sharedTabs.isSelected(tab),
+  removeTabFromSelectedScope,
+  addTabToSelectedScope: (tabId) => sharedTabs.addExplicit(tabId),
+  replaceSelectedScope: (tabId) => sharedTabs.replaceWith(tabId),
+  clearSelectedScope: () => sharedTabs.clear(),
   scheduleTabsSync,
   pauseTab,
 });
@@ -625,7 +638,8 @@ registerTabAccessEvents({
   scheduleTabsSync,
   detachDebugger,
   pauseTab,
-  removeTabFromOpenClawGroup,
+  removeTabFromOpenClawGroup: removeTabFromSelectedScope,
+  replaceTabInSelectedScope,
   runAccessMutation,
 });
 

@@ -439,7 +439,7 @@ describe.each(["all", "selected"] as const)("created initial target in %s mode",
       accessMode: mode,
       grant: false,
     });
-    harness.tabGroupUpdatedListener?.({ id: 7, title: "OpenClaw" });
+    harness.tabGroupUpdatedListener?.({ id: 7, title: "Shared with Sean" });
     naming.resolve();
     expect(await creating).toMatchObject({ type: "error" });
     expect(harness.debuggerAttach).not.toHaveBeenCalled();
@@ -453,7 +453,7 @@ describe.each(["all", "selected"] as const)("created initial target in %s mode",
     harness.debuggerAttach.mockImplementationOnce(async () => await attaching.promise);
     const creating = harness.command({ type: "createTab", url: "about:blank" });
     await vi.waitFor(() => expect(harness.debuggerAttach).toHaveBeenCalled());
-    harness.tabGroupUpdatedListener?.({ id: 7, title: "OpenClaw" });
+    harness.tabGroupUpdatedListener?.({ id: 7, title: "Shared with Sean" });
     attaching.resolve();
     expect(await creating).toMatchObject({ type: "result" });
     expect(harness.tabsRemove).not.toHaveBeenCalled();

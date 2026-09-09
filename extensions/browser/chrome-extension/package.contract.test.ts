@@ -37,9 +37,26 @@ describe("simplified Chrome extension package", () => {
 
     expect(options).toContain("Automation is paused to protect a pre-upgrade copilot session.");
     expect(options).toContain("Confirm old runs are finished");
-    expect(options).toContain("Disconnect and disable automatic setup");
+    expect(options).toContain("Forget pairing and disable automatic setup");
     expect(options).toContain("Use local OpenClaw");
     expect(popup).toContain("Automation paused; open Settings");
     expect(options).not.toMatch(/copilotSessionRegistryV1|sessionId|sessionKey|deviceToken/u);
+  });
+
+  it("ships the distinct Sean identity and reusable access controls", () => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(extensionDir, "manifest.json"), "utf8"));
+    const options = fs.readFileSync(path.join(extensionDir, "options.html"), "utf8");
+    const popup = fs.readFileSync(path.join(extensionDir, "popup.html"), "utf8");
+
+    expect(manifest).toMatchObject({
+      name: "OpenClaw Browser — Sean",
+      short_name: "Sean Browser",
+      version: "2.3.0.1",
+    });
+    expect(options).toContain("Share only this tab");
+    expect(options).not.toContain("tab group");
+    expect(options).toContain('id="connectionAction"');
+    expect(popup).toContain("Share only this tab with Sean");
+    expect(popup).toContain('id="connectionAction"');
   });
 });

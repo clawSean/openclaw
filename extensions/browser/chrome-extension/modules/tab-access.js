@@ -15,12 +15,18 @@ function initialBlankDocument(tab) {
  * Owns access mode, durable browser-session pauses, and revocation epochs.
  * Every authority-bearing caller captures an epoch and checks through here.
  */
-export function createTabAccessPolicy({ chromeApi = chrome, isSelectedTab, getGroupColor }) {
+export function createTabAccessPolicy({
+  chromeApi = chrome,
+  isSelectedTab,
+  addSelectedTab,
+  getGroupColor,
+}) {
   const deniedTabIds = new Set();
   // Only createTab below mints these records. Group membership and Tab snapshots
   // cannot recreate initial-document ownership after navigation or worker restart.
   const createdTabs = new Map();
   const pendingCreations = new Set();
+  const activeCreations = new Set();
   const tabRevisions = new Map();
   const provenEpochs = new WeakMap();
   let fileAccessGranted = false;
@@ -34,7 +40,9 @@ export function createTabAccessPolicy({ chromeApi = chrome, isSelectedTab, getGr
   let initialized = null;
   let storageChain = Promise.resolve();
   const addTabToGroup = (tabId, created) =>
-    addTabToOpenClawGroup(tabId, { chromeApi, getGroupColor, created });
+    addSelectedTab
+      ? addSelectedTab(tabId, created)
+      : addTabToOpenClawGroup(tabId, { chromeApi, getGroupColor, created });
 
   const documents = createTabDocumentProvenance({
     access: {
@@ -252,7 +260,7 @@ export function createTabAccessPolicy({ chromeApi = chrome, isSelectedTab, getGr
     return accessChanged;
   }
 
-  async function createTab(message, { isCurrent, attachDebugger, handoff }) {
+  async function createTabOperation(message, { isCurrent, attachDebugger, handoff }) {
     const operationRevision = revision;
     const started = discoveryRevision;
     if (!enabled || transitioning || !isCurrent()) {
@@ -364,6 +372,34 @@ export function createTabAccessPolicy({ chromeApi = chrome, isSelectedTab, getGr
           }
         }
       }
+    }
+  }
+
+  async function createTab(message, operation) {
+    const pending = createTabOperation(message, operation);
+    activeCreations.add(pending);
+    try {
+      await pending;
+    } finally {
+      activeCreations.delete(pending);
+    }
+  }
+
+  async function waitForPendingCreations(timeoutMs = 5_000) {
+    if (activeCreations.size === 0) return;
+    let timer;
+    try {
+      await Promise.race([
+        Promise.allSettled([...activeCreations]),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("Timed out while revoking an in-flight tab creation.")),
+            timeoutMs,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -613,7 +649,7 @@ export function createTabAccessPolicy({ chromeApi = chrome, isSelectedTab, getGr
       throw new Error(`tab ${tabId} is paused for OpenClaw`);
     }
     if (state.reason === "not-selected") {
-      throw new Error(`tab ${tabId} is not in the OpenClaw tab group`);
+      throw new Error(`tab ${tabId} is not shared with Sean`);
     }
     if (state.reason === "incognito") {
       throw new Error(`tab ${tabId} is incognito and unavailable to OpenClaw`);
@@ -756,6 +792,7 @@ export function createTabAccessPolicy({ chromeApi = chrome, isSelectedTab, getGr
     invalidateAll,
     observeTabUpdate,
     createTab,
+    waitForPendingCreations,
     addTabToGroup,
     inspectTab,
     requireTab,

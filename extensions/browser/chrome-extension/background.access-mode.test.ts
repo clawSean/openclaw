@@ -1077,4 +1077,210 @@ describe("relay command authorization", () => {
       expect(harness.debuggerDetach).not.toHaveBeenCalled();
     }
   });
+
+  it("disconnects with an empty inventory and reconnects without losing pairing", async () => {
+    const harness = await loadBackground({
+      storedConfig: {
+        relayUrl: "ws://127.0.0.1:18797/extension",
+        token: TEST_RELAY_KEY,
+        authVersion: 2,
+        accessMode: "selected",
+        connectionEnabled: true,
+      },
+      initialTabs: [{ id: 121, url: "https://example.com/kept", groupId: 7 }],
+    });
+    const original = harness.relaySockets[0];
+    if (!original) {
+      throw new Error("expected relay socket");
+    }
+    await harness.authenticate(original);
+
+    await expect(
+      sendRuntimeMessage(harness, { type: "setConnectionEnabled", enabled: false }),
+    ).resolves.toEqual({ ok: true, connectionEnabled: false });
+
+    const emptyInventoryCall = original.send.mock.calls.findIndex(([raw]) => {
+      const frame = JSON.parse(raw);
+      return frame.type === "tabs" && Array.isArray(frame.tabs) && frame.tabs.length === 0;
+    });
+    expect(emptyInventoryCall).toBeGreaterThanOrEqual(0);
+    expect(original.send.mock.invocationCallOrder[emptyInventoryCall]).toBeLessThan(
+      original.close.mock.invocationCallOrder[0]!,
+    );
+    expect(harness.storageValues).toMatchObject({
+      relayUrl: "ws://127.0.0.1:18797/extension",
+      token: TEST_RELAY_KEY,
+      connectionEnabled: false,
+    });
+    await expect(sendRuntimeMessage(harness, { type: "getStatus" })).resolves.toMatchObject({
+      paired: true,
+      connectionEnabled: false,
+      accessibleTabCount: 0,
+    });
+
+    const socketsBeforeLifecycle = harness.relaySockets.length;
+    harness.startupListener();
+    harness.alarmListener({ name: RELAY_WATCHDOG_ALARM });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(harness.relaySockets).toHaveLength(socketsBeforeLifecycle);
+
+    await expect(
+      sendRuntimeMessage(harness, { type: "setConnectionEnabled", enabled: true }),
+    ).resolves.toEqual({ ok: true, connectionEnabled: true });
+    const replacement = harness.relaySockets.at(-1);
+    if (!replacement || replacement === original) {
+      throw new Error("expected replacement relay socket");
+    }
+    await harness.authenticate(replacement);
+    const hello = replacement.send.mock.calls
+      .map(([raw]) => JSON.parse(raw))
+      .find((frame) => frame.type === "hello");
+    expect(hello.tabs).toEqual([expect.objectContaining({ tabId: 121 })]);
+    expect(harness.storageValues.token).toBe(TEST_RELAY_KEY);
+    expect(harness.storageValues.connectionEnabled).toBe(true);
+  });
+
+  it("atomically moves selected access to only the requested tab", async () => {
+    const harness = await loadBackground({
+      storedConfig: {
+        relayUrl: "ws://127.0.0.1:18797/extension",
+        token: TEST_RELAY_KEY,
+        authVersion: 2,
+        accessMode: "all",
+        connectionEnabled: true,
+      },
+      initialTabs: [
+        { id: 131, url: "https://example.com/old-one", groupId: 7 },
+        { id: 132, url: "https://example.com/current", groupId: -1 },
+        { id: 133, url: "https://example.com/old-two", groupId: 7 },
+      ],
+    });
+    const original = harness.relaySockets[0];
+    if (!original) {
+      throw new Error("expected relay socket");
+    }
+    await harness.authenticate(original);
+
+    await expect(
+      sendRuntimeMessage(harness, { type: "shareOnlyTab", tabId: 132 }),
+    ).resolves.toEqual({ ok: true, accessMode: "selected", tabId: 132 });
+
+    expect(original.close).toHaveBeenCalledOnce();
+    expect(
+      original.send.mock.calls.some(([raw]) => {
+        const frame = JSON.parse(raw);
+        return frame.type === "tabs" && Array.isArray(frame.tabs) && frame.tabs.length === 0;
+      }),
+    ).toBe(true);
+    expect(harness.storageValues).toMatchObject({ seanExplicitSelectionV1: true });
+    expect(harness.sessionStorageSet).toHaveBeenCalledWith({ seanSharedTabIdsV1: [132] });
+    expect(harness.tabsGroup).not.toHaveBeenCalled();
+    expect(harness.tabsUngroup).not.toHaveBeenCalled();
+    expect(harness.storageValues).toMatchObject({
+      accessMode: "selected",
+      connectionEnabled: true,
+      scopeCleanupPending: false,
+      token: TEST_RELAY_KEY,
+    });
+
+    const replacement = harness.relaySockets.at(-1);
+    if (!replacement || replacement === original) {
+      throw new Error("expected replacement relay socket");
+    }
+    await harness.authenticate(replacement);
+    const hello = replacement.send.mock.calls
+      .map(([raw]) => JSON.parse(raw))
+      .find((frame) => frame.type === "hello");
+    expect(hello.tabs).toEqual([expect.objectContaining({ tabId: 132 })]);
+  });
+
+  it("stays disconnected with pairing intact when a one-tab handoff cannot be verified", async () => {
+    const harness = await loadBackground({
+      storedConfig: {
+        relayUrl: "ws://127.0.0.1:18797/extension",
+        token: TEST_RELAY_KEY,
+        authVersion: 2,
+        accessMode: "all",
+        connectionEnabled: true,
+      },
+      initialTabs: [
+        { id: 141, url: "https://example.com/old", groupId: 7 },
+        { id: 142, url: "https://example.com/current", groupId: -1 },
+      ],
+    });
+    const original = harness.relaySockets[0];
+    if (!original) {
+      throw new Error("expected relay socket");
+    }
+    await harness.authenticate(original);
+    harness.sessionStorageSet.mockRejectedValueOnce(
+      new Error("simulated selected-tab storage failure"),
+    );
+
+    await expect(
+      sendRuntimeMessage(harness, { type: "shareOnlyTab", tabId: 142 }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("Sean was disconnected; pairing was kept."),
+    });
+
+    expect(original.close).toHaveBeenCalledOnce();
+    expect(harness.relaySockets).toHaveLength(1);
+    expect(harness.storageValues).toMatchObject({
+      relayUrl: "ws://127.0.0.1:18797/extension",
+      token: TEST_RELAY_KEY,
+      connectionEnabled: false,
+      scopeCleanupPending: true,
+    });
+    await expect(
+      sendRuntimeMessage(harness, { type: "setConnectionEnabled", enabled: true }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("Finish the one-tab handoff"),
+    });
+    expect(harness.relaySockets).toHaveLength(1);
+
+    await expect(
+      sendRuntimeMessage(harness, {
+        type: "pair",
+        pairingString: `ws://127.0.0.1:18798/extension#${REPLACEMENT_TEST_RELAY_KEY}`,
+        accessMode: "all",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("Finish the one-tab handoff"),
+    });
+
+    await expect(
+      sendRuntimeMessage(harness, { type: "shareOnlyTab", tabId: 142 }),
+    ).resolves.toEqual({ ok: true, accessMode: "selected", tabId: 142 });
+    expect(harness.storageValues).toMatchObject({
+      token: TEST_RELAY_KEY,
+      connectionEnabled: true,
+      scopeCleanupPending: false,
+    });
+    expect(harness.relaySockets).toHaveLength(2);
+  });
+
+  it("keeps a pending one-tab cleanup disconnected after worker restart", async () => {
+    const harness = await loadBackground({
+      storedConfig: {
+        relayUrl: "ws://127.0.0.1:18797/extension",
+        token: TEST_RELAY_KEY,
+        authVersion: 2,
+        accessMode: "selected",
+        connectionEnabled: true,
+        scopeCleanupPending: true,
+      },
+      initialTabs: [{ id: 151, url: "https://example.com/pending", groupId: 7 }],
+    });
+
+    expect(harness.relaySockets).toHaveLength(0);
+    await expect(sendRuntimeMessage(harness, { type: "getStatus" })).resolves.toMatchObject({
+      paired: true,
+      connectionEnabled: false,
+      scopeCleanupPending: true,
+      accessibleTabCount: 0,
+    });
+  });
 });

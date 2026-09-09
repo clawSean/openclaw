@@ -20,6 +20,8 @@ export function createPairingConfigStore(storage: {
     token: string;
     gatewayUrl: string;
     authVersion?: 2;
+    connectionEnabled: boolean;
+    scopeCleanupPending: boolean;
     accessMode: "all" | "selected";
     groupColor: string;
     pairingStatusHint: string;
@@ -30,6 +32,9 @@ export function createPairingConfigStore(storage: {
     accessMode?: "all" | "selected",
   ): Promise<void>;
   setAccessMode(accessMode: unknown): Promise<"all" | "selected">;
+  setConnectionEnabled(enabled: unknown): Promise<boolean>;
+  beginShareOnly(): Promise<void>;
+  completeShareOnly(): Promise<void>;
   clear(): Promise<void>;
 };
 

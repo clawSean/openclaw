@@ -96,6 +96,7 @@ export type TabAccessPolicy = {
     message: { url: string; background?: boolean; focus?: boolean },
     operation: CreatedTabOperation,
   ): Promise<void>;
+  waitForPendingCreations(timeoutMs?: number): Promise<void>;
   inspectTab(tabId: number, epoch?: TabAccessEpoch): Promise<TabAccessState>;
   requireTab(tabId: number, epoch?: TabAccessEpoch): Promise<AccessibleBrowserTabSnapshot>;
   requireTabAfterNavigation(
@@ -117,5 +118,6 @@ export type TabAccessPolicy = {
 export function createTabAccessPolicy(options: {
   chromeApi?: TabAccessChromeApi;
   isSelectedTab(tab: BrowserTabSnapshot): boolean | Promise<boolean>;
+  addSelectedTab?(tabId: number, created?: unknown): Promise<void>;
   getGroupColor?(): Promise<string>;
 }): TabAccessPolicy;

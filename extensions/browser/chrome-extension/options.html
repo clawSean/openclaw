@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenClaw Browser Settings</title>
+    <title>Sean Browser Access Settings</title>
     <style>
       :root {
         color-scheme: light dark;
@@ -84,7 +84,7 @@
     </style>
   </head>
   <body>
-    <h1>OpenClaw Browser Settings</h1>
+    <h1>Sean Browser Access</h1>
     <p class="muted">
       The extension only relays browser automation. Pairing keys and URLs are never shown here.
     </p>
@@ -94,8 +94,8 @@
       <p>Automation is paused to protect a pre-upgrade copilot session.</p>
       <p class="muted">
         Confirm old runs are finished, then use
-        <strong>Disconnect and disable automatic setup</strong> to discard retired recovery state,
-        followed by <strong>Use local OpenClaw</strong> to reconnect.
+        <strong>Forget pairing and disable automatic setup</strong> to discard retired recovery
+        state, followed by <strong>Use local OpenClaw</strong> to reconnect.
       </p>
     </section>
 
@@ -105,6 +105,7 @@
       <p id="bootstrapStatus" class="muted"></p>
       <label><input id="automaticSetup" type="checkbox" /> Use automatic local setup</label>
       <button id="useLocal" class="primary" type="button">Use local OpenClaw</button>
+      <button id="connectionAction" type="button"></button>
     </section>
 
     <section>
@@ -114,6 +115,10 @@
         <option value="all">All tabs</option>
         <option value="selected">Selected tabs</option>
       </select>
+      <p class="muted">
+        Use the popup to share a tab with Sean. <strong>Share only this tab</strong> clears every
+        other shared tab in one click and works in Arc and Dia without relying on browser grouping.
+      </p>
     </section>
 
     <section>
@@ -138,7 +143,7 @@
         >
       </p>
       <button id="disconnect" class="danger" type="button">
-        Disconnect and disable automatic setup
+        Forget pairing and disable automatic setup
       </button>
     </section>
     <p id="message" class="status"></p>

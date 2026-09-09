@@ -98,7 +98,7 @@ export async function assertRelayTabCreation(params: {
         async (id) => await chrome.tabGroups.get(id),
         createdTab.groupId,
       ),
-    ).toMatchObject({ title: "OpenClaw" });
+    ).toMatchObject({ title: "Shared with Sean" });
     expect(created.initialUrl).toBe("about:blank");
     expect(opened.status, JSON.stringify(opened.body)).toBe(200);
     const body = opened.body as { targetId: string };

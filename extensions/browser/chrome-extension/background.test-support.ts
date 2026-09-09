@@ -15,6 +15,7 @@ export type RuntimeMessageListener = (
     pairingString?: string;
     accessMode?: string;
     grant?: boolean;
+    enabled?: boolean;
   },
   sender: unknown,
   sendResponse: (response: unknown) => void,

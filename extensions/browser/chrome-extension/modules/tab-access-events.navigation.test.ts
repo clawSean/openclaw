@@ -88,6 +88,7 @@ async function createNavigationHarness(
     detachDebugger,
     pauseTab: async (tabId) => await policy.pause(tabId),
     removeTabFromOpenClawGroup: async () => {},
+    replaceTabInSelectedScope: async () => false,
     runAccessMutation: async (task) => await task(),
   });
   return {

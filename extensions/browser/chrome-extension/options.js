@@ -5,6 +5,7 @@ const accessMode = document.getElementById("accessMode");
 const pairingString = document.getElementById("pairingString");
 const pair = document.getElementById("pair");
 const useLocal = document.getElementById("useLocal");
+const connectionAction = document.getElementById("connectionAction");
 const disconnect = document.getElementById("disconnect");
 const message = document.getElementById("message");
 const retiredCustody = document.getElementById("retiredCustody");
@@ -16,9 +17,13 @@ async function refresh() {
   connectionStatus.textContent = status.paired
     ? custodyBlocked
       ? "Paired; automation paused"
-      : status.state === "on"
-        ? "Connected"
-        : "Paired; relay unavailable"
+      : status.scopeCleanupPending
+        ? "Tab handoff incomplete; Sean remains disconnected"
+        : !status.connectionEnabled
+          ? "Disconnected from Sean; pairing saved"
+          : status.state === "on"
+            ? "Connected to Sean"
+            : "Paired; Sean relay unavailable"
     : "Not paired";
   automaticSetup.checked = !status.nativeBootstrap?.disabled && !custodyBlocked;
   bootstrapStatus.textContent = custodyBlocked
@@ -31,11 +36,18 @@ async function refresh() {
           ? "Waiting for the local native host"
           : "Automatic bootstrap ready";
   accessMode.value = status.accessMode === "selected" ? "selected" : "all";
-  automaticSetup.disabled = custodyBlocked;
-  useLocal.disabled = custodyBlocked;
-  accessMode.disabled = !status.paired || custodyBlocked;
-  pairingString.disabled = custodyBlocked;
-  pair.disabled = custodyBlocked;
+  automaticSetup.disabled = custodyBlocked || status.scopeCleanupPending;
+  useLocal.disabled = custodyBlocked || status.scopeCleanupPending;
+  connectionAction.disabled = !status.paired || custodyBlocked || status.scopeCleanupPending;
+  connectionAction.textContent = status.connectionEnabled
+    ? "Disconnect Sean (keep pairing)"
+    : "Reconnect Sean";
+  connectionAction.classList.toggle("danger", status.connectionEnabled === true);
+  connectionAction.classList.toggle("primary", status.connectionEnabled !== true);
+  connectionAction.dataset.enable = String(!status.connectionEnabled);
+  accessMode.disabled = !status.paired || custodyBlocked || status.scopeCleanupPending;
+  pairingString.disabled = custodyBlocked || status.scopeCleanupPending;
+  pair.disabled = custodyBlocked || status.scopeCleanupPending;
   disconnect.disabled = !status.paired && !custodyBlocked;
 }
 
@@ -68,6 +80,13 @@ useLocal.addEventListener("click", () => {
     "Looking for local OpenClaw…",
   );
 });
+connectionAction.addEventListener("click", () => {
+  const enabled = connectionAction.dataset.enable === "true";
+  void showResult(
+    () => chrome.runtime.sendMessage({ type: "setConnectionEnabled", enabled }),
+    enabled ? "Reconnect requested." : "Sean disconnected. Pairing was kept.",
+  );
+});
 accessMode.addEventListener("change", () => {
   void showResult(
     () => chrome.runtime.sendMessage({ type: "setAccessMode", accessMode: accessMode.value }),
@@ -88,7 +107,7 @@ pair.addEventListener("click", () => {
 disconnect.addEventListener("click", () => {
   void showResult(
     () => chrome.runtime.sendMessage({ type: "unpair" }),
-    "Disconnected. Automatic setup is disabled.",
+    "Pairing forgotten. Automatic setup is disabled.",
   );
 });
 

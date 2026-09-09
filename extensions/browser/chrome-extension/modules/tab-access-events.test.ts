@@ -25,6 +25,7 @@ function createHarness(
         tab: BrowserTabSnapshot,
       ) => void)
     | undefined;
+  let tabsRemovedListener: ((tabId: number) => void) | undefined;
   let tabsReplacedListener: ((addedTabId: number, removedTabId: number) => void) | undefined;
   let groupUpdatedListener: ((group?: { id: number; title?: string }) => void) | undefined;
   let revision = 0;
@@ -71,6 +72,7 @@ function createHarness(
   });
   const pauseTab = vi.fn(async () => undefined);
   const removeTabFromOpenClawGroup = vi.fn(async () => undefined);
+  const replaceTabInSelectedScope = vi.fn(async () => false);
   const chromeApi = {
     debugger: {
       onEvent: {
@@ -85,7 +87,11 @@ function createHarness(
       },
     },
     tabs: {
-      onRemoved: { addListener: vi.fn() },
+      onRemoved: {
+        addListener: (listener: typeof tabsRemovedListener) => {
+          tabsRemovedListener = listener;
+        },
+      },
       onReplaced: {
         addListener: (listener: typeof tabsReplacedListener) => {
           tabsReplacedListener = listener;
@@ -118,11 +124,13 @@ function createHarness(
     detachDebugger,
     pauseTab,
     removeTabFromOpenClawGroup,
+    replaceTabInSelectedScope,
     runAccessMutation: vi.fn(async (task) => await task()),
   });
   if (
     !debuggerEventListener ||
     !debuggerDetachListener ||
+    !tabsRemovedListener ||
     !tabsUpdatedListener ||
     !tabsReplacedListener ||
     !groupUpdatedListener
@@ -138,6 +146,8 @@ function createHarness(
     policy,
     pauseTab,
     removeTabFromOpenClawGroup,
+    replaceTabInSelectedScope,
+    tabsRemovedListener,
     send,
     setAccessible: (next: boolean) => {
       accessible = next;
@@ -280,8 +290,20 @@ describe("tab access event epochs", () => {
 
     await vi.waitFor(() => {
       expect(harness.policy.replaceTab).toHaveBeenCalledWith(8, 7);
+      expect(harness.replaceTabInSelectedScope).toHaveBeenCalledWith(8, 7);
       expect(harness.detachDebugger).toHaveBeenCalledWith(7);
       expect(harness.detachDebugger).toHaveBeenCalledWith(8);
+    });
+  });
+
+  it("removes a closed tab from both policy storage and selected scope", async () => {
+    const harness = createHarness("selected");
+
+    harness.tabsRemovedListener(7);
+
+    await vi.waitFor(() => {
+      expect(harness.removeTabFromOpenClawGroup).toHaveBeenCalledWith(7);
+      expect(harness.policy.forgetTab).toHaveBeenCalledWith(7);
     });
   });
 

@@ -166,12 +166,17 @@ describe("persisted pairing storage", () => {
       set,
       remove: async () => undefined,
     }).read();
-    expect(set).toHaveBeenCalledWith({ authVersion: 2, accessMode: "selected" });
+    expect(set).toHaveBeenCalledWith({
+      authVersion: 2,
+      accessMode: "selected",
+      connectionEnabled: true,
+    });
     expect(config).toMatchObject({
       relayUrl: "ws://127.0.0.1:18797/extension",
       token: RELAY_SECRET,
       authVersion: 2,
       accessMode: "selected",
+      connectionEnabled: true,
     });
   });
 
@@ -189,7 +194,11 @@ describe("persisted pairing storage", () => {
     await store.save({ relayUrl: "ws://127.0.0.1:18797/extension", token: RELAY_SECRET }, "orange");
 
     expect(stored.accessMode).toBe("all");
-    await expect(store.read()).resolves.toMatchObject({ accessMode: "all" });
+    expect(stored.connectionEnabled).toBe(true);
+    await expect(store.read()).resolves.toMatchObject({
+      accessMode: "all",
+      connectionEnabled: true,
+    });
   });
 
   it("persists an explicitly selected-tabs pairing", async () => {
@@ -223,8 +232,102 @@ describe("persisted pairing storage", () => {
     });
     const config = await createPairingConfigStore({ get: async () => stored, set, remove }).read();
     expect(config).toMatchObject({ accessMode: "selected", relayUrl: stored.relayUrl });
-    expect(set).toHaveBeenCalledWith({ accessMode: "selected" });
+    expect(set).toHaveBeenCalledWith({ accessMode: "selected", connectionEnabled: true });
     expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("keeps pairing credentials while disconnecting and reconnecting", async () => {
+    const stored: Record<string, unknown> = {
+      relayUrl: "ws://127.0.0.1:18797/extension",
+      token: RELAY_SECRET,
+      gatewayUrl: "",
+      authVersion: 2,
+      accessMode: "selected",
+      connectionEnabled: true,
+    };
+    const store = createPairingConfigStore({
+      get: async (keys) =>
+        Object.fromEntries(
+          keys.filter((key) => Object.hasOwn(stored, key)).map((key) => [key, stored[key]]),
+        ),
+      set: async (values) => {
+        Object.assign(stored, values);
+      },
+      remove: async (keys) => {
+        for (const key of keys) {
+          delete stored[key];
+        }
+      },
+    });
+
+    await expect(store.setConnectionEnabled(false)).resolves.toBe(false);
+    await expect(store.read()).resolves.toMatchObject({
+      relayUrl: "ws://127.0.0.1:18797/extension",
+      token: RELAY_SECRET,
+      connectionEnabled: false,
+    });
+    await expect(store.setConnectionEnabled(true)).resolves.toBe(true);
+    await expect(store.read()).resolves.toMatchObject({
+      token: RELAY_SECRET,
+      connectionEnabled: true,
+    });
+  });
+
+  it("repairs a malformed persisted connection switch to disconnected", async () => {
+    const stored: Record<string, unknown> = {
+      relayUrl: "ws://127.0.0.1:18797/extension",
+      token: RELAY_SECRET,
+      gatewayUrl: "",
+      authVersion: 2,
+      accessMode: "selected",
+      connectionEnabled: "yes",
+    };
+    const set = vi.fn(async (values: Record<string, unknown>) => {
+      Object.assign(stored, values);
+    });
+    const config = await createPairingConfigStore({
+      get: async () => stored,
+      set,
+      remove: async () => undefined,
+    }).read();
+
+    expect(config.connectionEnabled).toBe(false);
+    expect(set).toHaveBeenCalledWith({ connectionEnabled: false });
+  });
+
+  it("blocks reconnect until a failed one-tab handoff is completed", async () => {
+    const stored: Record<string, unknown> = {
+      relayUrl: "ws://127.0.0.1:18797/extension",
+      token: RELAY_SECRET,
+      gatewayUrl: "",
+      authVersion: 2,
+      accessMode: "all",
+      connectionEnabled: true,
+      scopeCleanupPending: false,
+    };
+    const store = createPairingConfigStore({
+      get: async (keys) =>
+        Object.fromEntries(
+          keys.filter((key) => Object.hasOwn(stored, key)).map((key) => [key, stored[key]]),
+        ),
+      set: async (values) => {
+        Object.assign(stored, values);
+      },
+      remove: async () => undefined,
+    });
+
+    await store.beginShareOnly();
+    await expect(store.read()).resolves.toMatchObject({
+      accessMode: "selected",
+      connectionEnabled: false,
+      scopeCleanupPending: true,
+    });
+    await expect(store.setConnectionEnabled(true)).rejects.toThrow("Finish the one-tab handoff");
+    await store.completeShareOnly();
+    await expect(store.read()).resolves.toMatchObject({
+      connectionEnabled: true,
+      scopeCleanupPending: false,
+    });
   });
 
   it("clears the access mode when unpairing", async () => {
@@ -241,6 +344,8 @@ describe("persisted pairing storage", () => {
       "token",
       "authVersion",
       "accessMode",
+      "connectionEnabled",
+      "scopeCleanupPending",
       "pairingStatus",
     ]);
   });
@@ -258,7 +363,14 @@ describe("persisted pairing storage", () => {
       remove,
     }).read();
     expect(config.relayUrl).toBe("");
-    expect(remove).toHaveBeenCalledWith(["relayUrl", "gatewayUrl", "token", "authVersion"]);
+    expect(remove).toHaveBeenCalledWith([
+      "relayUrl",
+      "gatewayUrl",
+      "token",
+      "authVersion",
+      "connectionEnabled",
+      "scopeCleanupPending",
+    ]);
   });
 
   it.each([
@@ -292,7 +404,14 @@ describe("persisted pairing storage", () => {
     expect(config).toMatchObject({ relayUrl: "", token: "", authVersion: undefined });
     expect(config.pairingStatusHint).toContain("no path prefix");
     expect(config.pairingStatusHint).not.toContain(RELAY_SECRET);
-    expect(remove).toHaveBeenCalledWith(["relayUrl", "gatewayUrl", "token", "authVersion"]);
+    expect(remove).toHaveBeenCalledWith([
+      "relayUrl",
+      "gatewayUrl",
+      "token",
+      "authVersion",
+      "connectionEnabled",
+      "scopeCleanupPending",
+    ]);
     expect(set).toHaveBeenCalledWith({ pairingStatus: "proxy-prefix-unsupported" });
 
     const afterWorkerRestart = await createPairingConfigStore({

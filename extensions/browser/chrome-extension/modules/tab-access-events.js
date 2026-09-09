@@ -1,3 +1,4 @@
+import { sanitizeCdpEvent } from "./credential-firewall.js";
 import { ACCESS_MODE_ALL, ACCESS_MODE_SELECTED } from "./relay-core.js";
 
 /** Register Chrome lifecycle events that can grant, revoke, or project tab access. */
@@ -12,6 +13,7 @@ export function registerTabAccessEvents({
   detachDebugger,
   pauseTab,
   removeTabFromOpenClawGroup,
+  replaceTabInSelectedScope,
   runAccessMutation,
 }) {
   let groupEventRevision = 0;
@@ -30,7 +32,7 @@ export function registerTabAccessEvents({
         tabId: source.tabId,
         ...(source.sessionId ? { sessionId: source.sessionId } : {}),
         method,
-        params,
+        params: sanitizeCdpEvent(method, params),
       },
       send,
     );
@@ -72,7 +74,12 @@ export function registerTabAccessEvents({
     void (async () => {
       await accessReady;
       scheduleTabsSync();
+      // Keep this direct (rather than behind runAccessMutation): forgetTab()
+      // must finish its second retirement before a fresh attach can capture a
+      // newer epoch for a reused/simulated tab identity. The selected-scope
+      // controller already serializes its own storage mutations.
       await policy.forgetTab(tabId).catch(() => undefined);
+      await removeTabFromOpenClawGroup(tabId).catch(() => undefined);
     })();
   });
 
@@ -82,16 +89,23 @@ export function registerTabAccessEvents({
     policy.retireTab(removedTabId);
     const detaching = [detachDebugger(removedTabId), detachDebugger(addedTabId)];
     scheduleTabsSync();
-    void (async () => {
+    void runAccessMutation(async () => {
       try {
         await accessReady;
-        await policy.replaceTab(addedTabId, removedTabId);
+        const replacements = await Promise.allSettled([
+          policy.replaceTab(addedTabId, removedTabId),
+          replaceTabInSelectedScope(addedTabId, removedTabId),
+        ]);
         await Promise.allSettled(detaching);
+        const failure = replacements.find((result) => result.status === "rejected");
+        if (failure?.status === "rejected") {
+          throw failure.reason;
+        }
       } finally {
         policy.endRevocation(revocation);
         scheduleTabsSync();
       }
-    })().catch(() => undefined);
+    }).catch(() => undefined);
   });
 
   chromeApi.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {

@@ -338,7 +338,7 @@ export async function loadBackground({
       query: vi.fn(async (): Promise<Array<{ id: number; windowId: number }>> => []),
       get: vi.fn(async (groupId: number) => ({
         id: groupId,
-        title: groupId === 7 ? "OpenClaw" : "Other",
+        title: groupId === 7 ? "Shared with Sean" : "Other",
         windowId: 1,
       })),
       update: vi.fn(async (id: number, properties: { title: string; color?: string }) => {
@@ -447,6 +447,8 @@ export async function loadBackground({
           sendNativeMessage.mock.calls.length > 0 ||
           Object.hasOwn(storageValues, "copilotSessionRegistryV1") ||
           Object.hasOwn(storageValues, RETIRED_CUSTODY_BLOCKED_KEY) ||
+          storageValues.connectionEnabled === false ||
+          storageValues.scopeCleanupPending === true ||
           storageValues.nativeBootstrapDisabled === true,
       ).toBe(true);
     });
