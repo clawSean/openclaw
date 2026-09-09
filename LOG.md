@@ -1,5 +1,22 @@
 # Log
 
+## 2026-09-09
+
+- Activated and post-restart verified the exact OpenClaw `2026.9.3` Gateway on
+  Node `26.7.0`; Gateway RPC, Telegram, iMessage, Nemo, and browser relay passed.
+- A real remote Arc install of `2.3.0.1` paired over Tailscale but exposed three
+  handoff defects: stale popup status, a short Arc replacement-tab visibility
+  gap, and the credential firewall blocking Playwright's session-scoped
+  `Target.getTargetInfo` query.
+- Fixed those defects in source commit
+  `32743d4473f4d3cda5ac8bebdf72ad519851779c`. Explicit cross-target queries and
+  credential/cookie extraction remain blocked.
+- Exact-head extension tests passed `613/613` with one opt-in upstream Chromium
+  bootstrap skip. The `2.3.0.2` ZIP passed archive/package parity, SHA-256, and
+  verified-secret scans and was sent privately for exact remote-Mac proof.
+- Public `.2` release is intentionally pending until the remote Mac proves the
+  corrected share/disconnect/reconnect flow.
+
 ## 2026-09-08
 
 - Installed the exact lockfile dependencies in the isolated `v2026.9.3`

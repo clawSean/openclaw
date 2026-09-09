@@ -2,26 +2,31 @@
 
 ## Current
 
-- Phase: published; host rollout remains approval-gated.
+- Phase: `2.3.0.2` release candidate delivered privately; final remote-Mac
+  proof and public release remain.
 - Base: OpenClaw `v2026.9.3` at
   `1391f7cd2d40ab5bbcf2f5f831d3a64f520e72d7`.
 - Branch: `personal/browser-extension-compat-v2026.9.3`.
-- Released: `OpenClaw Browser — Sean` `2.3.0.1` at
+- Published baseline: `OpenClaw Browser — Sean` `2.3.0.1` at
   [`v2.3.0-arc-dia.1`](https://github.com/clawSean/openclaw-arc-dia-browser-extension/releases/tag/v2.3.0-arc-dia.1).
-- Artifact source commit: `8f7aa9b3c933c58ae054665e721ca1c4e85f8029`.
-- Exact-head extension suite: `611 passed`, `1` upstream opt-in Chromium
+- Candidate source commit: `32743d4473f4d3cda5ac8bebdf72ad519851779c`.
+- Exact-head extension suite: `613 passed`, `1` upstream opt-in Chromium
   bootstrap test skipped.
 - Full production build: passed on Node `26.7.0`.
 - Real disposable-profile proof: Arc `1.163.0` and Dia `1.47.1` both passed
   direct Gateway pairing, inventory, semantic snapshot, typing, single-tab
   handoff, zero-tab disconnect, and reconnect without re-pairing. Arc also
   passed select and click; Dia passed direct navigation.
-- Live installation: unchanged on `2026.9.1`. The `2026.9.3` proof Gateway was
-  isolated on port `19931`; no live Gateway, personal browser profile, or global
-  OpenClaw package was changed.
-- Release verification: public CI passed; final filesystem and Git-history
-  secret scans reported zero verified secrets; downloaded release assets
-  matched the committed packages and SHA-256 checksums.
+- The `.2` candidate fixes the real remote-Arc handoff failures found after the
+  `.1` release: current-tab identity authorization, live popup reconnect status,
+  and bounded Arc replacement-tab adoption. Focused regressions and the full
+  extension suite pass; exact remote-Mac confirmation is still required.
+- Live Gateway: exact OpenClaw `2026.9.3` commit `e4b4414` on Node `26.7.0`;
+  Gateway RPC, Telegram, iMessage, Nemo, and browser relay passed post-restart
+  checks.
+- Candidate verification: archive integrity, package/archive parity, SHA-256,
+  and filesystem plus Git-history verified-secret scans pass locally. The `.2`
+  GitHub release and download-back proof remain pending.
 
 ## Decisions
 
@@ -39,12 +44,11 @@
 
 ## Next
 
-1. Complete final secret/history scans.
-2. Package upstream `2.3.0` and `OpenClaw Browser — Sean` `2.3.0.1` with clean,
-   unmistakable filenames and SHA-256 checksums.
-3. Publish and download-verify the GitHub release.
-4. Separately request approval before any live `2026.9.3` runtime-path change or
-   Gateway restart.
+1. Load `OpenClaw-Browser-Sean-Arc-Dia-2.3.0.2.zip` on the remote Mac.
+2. Prove connect, one-tab share, snapshot/control, disconnect to zero, and
+   reconnect without re-pairing.
+3. Publish `v2.3.0-arc-dia.2`, wait for CI, download the release assets, and
+   verify their checksums and package parity.
 
 ## Known risks
 
@@ -54,9 +58,8 @@
   therefore not the recommended Arc path.
 - Automatic native-host setup is Chrome-oriented. Manual direct-Gateway pairing
   remains the dependable Arc/Dia path, including over a valid Tailscale WSS URL.
-- The live `2026.9.1` Gateway still contains the old target-identity failure.
-  Using this release's full browser-control path requires an approved live update
-  to `2026.9.3` or newer.
+- The `.1` artifact is superseded by `.2`; its real remote-Arc one-tab handoff can
+  reconnect with zero published tabs.
 - Screenshot and one below-fold Dia click could not be meaningfully proven in
   the no-display macOS session. This is recorded as a window-geometry limitation;
   semantic snapshots, typing, Arc click/select, and Dia navigation passed.
