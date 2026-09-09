@@ -2,18 +2,19 @@
 
 ## Current
 
-- Phase: `2.3.0.3` settings-correctness candidate verified locally; packaging,
-  publication, and final remote-Mac proof remain.
-- Base: OpenClaw `v2026.9.3` at
-  `0a7b700f2f6711b99ad91a6cc27caec84f448a22`.
+- Phase: `2.3.0.3` is packaged and published as a prerelease. Automated and
+  Settings-page checks pass; final manual-WSS control proof is blocked by a
+  stale live Gateway process loading an obsolete generated `dist` chunk.
+- Upstream base: OpenClaw `v2026.9.3` at
+  `1391f7cd2d40ab5bbcf2f5f831d3a64f520e72d7`.
 - Branch: `personal/browser-extension-compat-v2026.9.3`.
-- Published baseline: `OpenClaw Browser — Sean` `2.3.0.2` at
-  [`v2.3.0-arc-dia.2`](https://github.com/clawSean/openclaw-arc-dia-browser-extension/releases/tag/v2.3.0-arc-dia.2).
-- Candidate working tree is based on the exact base commit above; its release
-  commit is recorded when packaging completes.
+- Source commit: `276d71266bcf588225d23713deddddec5d53b6d5`.
+- Published candidate: `OpenClaw Browser — Sean` `2.3.0.3` at
+  [`v2.3.0-arc-dia.3`](https://github.com/clawSean/openclaw-arc-dia-browser-extension/releases/tag/v2.3.0-arc-dia.3),
+  release commit `bed338e97d88ae373209bb94c1a6e9b32d8cfb1e`.
 - Exact-head extension suite: `635 passed`, `1` upstream opt-in Chromium
   bootstrap test skipped.
-- Full production build: passed on Node `24.15.0`.
+- Full production build: passed on supported Node `26.7.0`.
 - Real disposable-profile proof: Arc `1.163.0` and Dia `1.47.1` both passed
   direct Gateway pairing, inventory, semantic snapshot, typing, single-tab
   handoff, zero-tab disconnect, and reconnect without re-pairing. Arc also
@@ -32,13 +33,23 @@
 browser access`; page-local live-state inputs changed Connecting to Connected
   in about one second and held Unavailable across later polls with zero false
   Connected claims. The proof used no Gateway, pairing secret, or live config.
-- Live Gateway: exact OpenClaw `2026.9.3` commit `e4b4414` on Node `26.7.0`;
-  Gateway RPC, Telegram, iMessage, Nemo, and browser relay passed post-restart
-  checks.
-- `.2` verification: archive integrity, package/archive parity, SHA-256, and
-  filesystem plus Git-history verified-secret scans pass. GitHub CI passed on
-  exact release commit `937dc3225dc6`; downloaded assets matched their checksums
-  and committed packages. Equivalent `.3` artifact checks remain pending.
+- A later disposable Dia manual-WSS attempt verified the exact published `.3`
+  asset, disabled automatic local setup, and reached the active Tailscale
+  `/browser/extension` route. It correctly rendered `Connecting` then
+  `Unavailable` because the running Gateway process imports missing generated
+  chunk `gateway-relay-route-ZWmPGjrq.mjs`; the current coherent `dist` instead
+  references `gateway-relay-route-C05o6QSx.mjs`. Gateway logs record
+  `ERR_MODULE_NOT_FOUND`, and the route returns `502` before authentication.
+  This is a deployment blocker, not an extension pass or credential failure.
+- Live Gateway: OpenClaw `2026.9.3` on Node `26.7.0`; Gateway RPC, Telegram,
+  and iMessage remain healthy. Browser relay upgrades remain blocked until the
+  already-built coherent `dist` is activated by an explicitly approved restart.
+- `.3` verification: archive integrity, package/archive parity, SHA-256, and
+  filesystem plus Git-history verified-secret scans pass. GitHub artifact CI
+  passed on exact release commit `bed338e97d88`; downloaded assets matched their
+  checksums and committed packages. Reproducible CI now pins source commit
+  `276d71266bc` and upstream commit `1391f7cd2d4`, rebuilds both packages, and
+  compares them byte-for-byte with the committed artifacts.
 
 ## Decisions
 
@@ -59,9 +70,12 @@ browser access`; page-local live-state inputs changed Connecting to Connected
 
 ## Next
 
-1. Package, secret-scan, checksum, and publish the `2.3.0.3` prerelease.
-2. Load `OpenClaw-Browser-Sean-Arc-Dia-2.3.0.3.zip` on the remote Mac and prove
-   truthful live Settings status plus connect/control/disconnect/reconnect.
+1. Obtain explicit approval to restart the Gateway once into the already-built,
+   coherent current `dist`; capture rollback state and use the watchdog path.
+2. Re-run exact public `.3` manual-WSS proof: pair, publish one tab, snapshot and
+   act, disconnect to zero, reconnect without a code, then clean up.
+3. If green, promote the immutable `.3` release to Latest and update the private
+   Clawdia handoff from prerelease to final.
 
 ## Known risks
 

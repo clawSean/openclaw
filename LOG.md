@@ -2,6 +2,27 @@
 
 ## 2026-09-09
 
+- Published `v2.3.0-arc-dia.3` as a prerelease from source commit
+  `276d71266bcf` and release commit `bed338e97d88`. Package/archive parity,
+  SHA-256, downloaded-asset byte comparison, GitHub artifact CI, and full-history
+  secret scans passed.
+- Added reproducible release metadata and CI that pin Sean source
+  `276d71266bcf` and upstream `1391f7cd2d4`, run the complete extension suite,
+  rebuild both runtime packages, and compare them byte-for-byte with committed
+  artifacts. Release docs now link directly to the ZIP assets.
+- Ran exact public `.3` through the real Settings-page manual-WSS path in a
+  disposable Dia `1.47.1` profile with automatic setup disabled. The extension
+  reached the active Tailscale route and correctly moved from Connecting to
+  Unavailable, but control proof could not begin because the running Gateway
+  process still imports generated chunk `gateway-relay-route-ZWmPGjrq.mjs`,
+  which no longer exists in the current coherent `dist`. Gateway logs show
+  `ERR_MODULE_NOT_FOUND` and the route returns `502`. The secret was unchanged;
+  pairing/profile cleanup passed and Gateway inventory returned to zero.
+- Final promotion is gated on one explicitly approved Gateway restart into the
+  coherent current build followed by the manual-WSS one-tab/control/disconnect/
+  reconnect proof. No restart, install, config change, or credential rotation
+  was performed during this check.
+
 - Activated and post-restart verified the exact OpenClaw `2026.9.3` Gateway on
   Node `26.7.0`; Gateway RPC, Telegram, iMessage, Nemo, and browser relay passed.
 - A real remote Arc install of `2.3.0.1` paired over Tailscale but exposed three
