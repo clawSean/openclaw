@@ -54,17 +54,20 @@ export async function applyTelegramModelCallbackSelection(params: {
       runtimeCfg,
     });
   const initialSessionState = resolveCurrentSessionState();
+  const matchesCapturedRoute = (
+    candidate: ReturnType<typeof resolveCurrentSessionState>,
+    captured: ReturnType<typeof resolveCurrentSessionState>,
+  ) =>
+    candidate.agentId === captured.agentId &&
+    candidate.sessionKey === captured.sessionKey &&
+    candidate.storePath === captured.storePath;
   const modelData = await modelSupport.retry(async () => {
     return await telegramDeps.buildModelsProviderData(runtimeCfg, initialSessionState.agentId);
   });
   const rejectChangedRoute = async (
     sessionState: ReturnType<typeof resolveCurrentSessionState>,
   ): Promise<boolean> => {
-    if (
-      sessionState.agentId === initialSessionState.agentId &&
-      sessionState.sessionKey === initialSessionState.sessionKey &&
-      sessionState.storePath === initialSessionState.storePath
-    ) {
+    if (matchesCapturedRoute(sessionState, initialSessionState)) {
       return false;
     }
     await modelSupport.retry(() =>
@@ -150,13 +153,19 @@ export async function applyTelegramModelCallbackSelection(params: {
     const previousAuthProfileId = sessionEntry.authProfileOverride?.trim();
     const sessionStore = { [sessionState.sessionKey]: sessionEntry };
     const validateSelectionAuthorization = async (): Promise<string | undefined> => {
-      if (await reauthorizeCallback()) {
-        return undefined;
+      if (!(await reauthorizeCallback())) {
+        logVerbose(
+          `Blocked telegram model callback from ${senderId || "unknown"} (authorization revoked during session update)`,
+        );
+        return "Model selection authorization changed. Reopen /model and try again.";
       }
-      logVerbose(
-        `Blocked telegram model callback from ${senderId || "unknown"} (authorization revoked during session update)`,
-      );
-      return "Model selection authorization changed. Reopen /model and try again.";
+      if (!matchesCapturedRoute(resolveCurrentSessionState(), sessionState)) {
+        logVerbose(
+          `Blocked telegram model callback from ${senderId || "unknown"} (routing changed during session update)`,
+        );
+        return "Model routing changed while this selection was being applied. Reopen /model and try again.";
+      }
+      return undefined;
     };
     const validateSelectionCommit = (): string | undefined =>
       telegramDeps.getRuntimeConfig() === runtimeCfg
