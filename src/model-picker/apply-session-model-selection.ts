@@ -306,17 +306,25 @@ export async function applySessionModelSelection(
       reassertLiveModelSwitchPending: applied.changed && nextEntry.liveModelSwitchPending === true,
       requireModelSelectionUnlocked: true,
       touchedFields: SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS,
+      // Pairing and caller authority can change while the session writer is queued.
+      // Revalidate after acquiring that lane; the synchronous config fence still
+      // runs at the transaction edge without another JavaScript yield.
+      validatePreparedCommit: params.validateSelectionAuthorization,
       validateCommit,
     });
+    if (persistence.status === "commit-rejected") {
+      if (persistence.entryExisted) {
+        params.sessionStore[params.sessionKey] = persistence.entry;
+        adoptPersistedSessionSnapshot(params.sessionEntry, persistence.entry);
+      }
+      return { status: "rejected", reason: "not-allowed", message: persistence.error };
+    }
     if (persistence.entry) {
       params.sessionStore[params.sessionKey] = persistence.entry;
       adoptPersistedSessionSnapshot(params.sessionEntry, persistence.entry);
     }
     if (persistence.status === "model-selection-locked") {
       return { status: "rejected", reason: "locked", message: MODEL_SELECTION_LOCKED_MESSAGE };
-    }
-    if (persistence.status === "commit-rejected") {
-      return { status: "rejected", reason: "not-allowed", message: persistence.error };
     }
     if (
       persistence.status !== "current" ||

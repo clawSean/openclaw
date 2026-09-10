@@ -847,34 +847,47 @@ describe("applySessionModelSelection", () => {
     },
   );
 
-  it("rejects caller authority revoked while persistence is queued", async () => {
+  it.each([
+    { name: "existing-session update", create: false },
+    { name: "missing-session creation", create: true },
+  ])("rejects caller authority revoked while $name is queued", async ({ create }) => {
     const tempRoot = tempDirs.make("openclaw-model-picker-authority-");
     const storePath = path.join(tempRoot, "sessions.json");
     const sessionKey = "agent:main:telegram:authority";
     const sessionEntry = createEntry();
-    await replaceSessionEntry({ sessionKey, storePath }, sessionEntry);
+    const initial = structuredClone(sessionEntry);
+    const sessionStore: Record<string, SessionEntry> = create ? {} : { [sessionKey]: sessionEntry };
+    if (!create) {
+      await replaceSessionEntry({ sessionKey, storePath }, sessionEntry);
+    }
     const persistenceEntered = createDeferred();
     const releasePersistence = createDeferred();
-    const blocker = patchSessionEntryCore({ sessionKey, storePath }, async () => {
-      persistenceEntered.resolve();
-      await releasePersistence.promise;
-      return null;
-    });
+    const blocker = patchSessionEntryCore(
+      { sessionKey, storePath },
+      async () => {
+        persistenceEntered.resolve();
+        await releasePersistence.promise;
+        return null;
+      },
+      { ...(create ? { fallbackEntry: createEntry() } : {}), skipMaintenance: true },
+    );
     await persistenceEntered.promise;
     let authorized = true;
     const authorizationChecked = createDeferred();
+    let authorizationChecks = 0;
 
     const pending = applySessionModelSelection(
       createParams({
+        allowCreate: create,
         sessionEntry,
         sessionKey,
+        sessionStore,
         storePath,
         validateSelectionAuthorization: async () => {
+          authorizationChecks += 1;
           authorizationChecked.resolve();
-          return undefined;
+          return authorized ? undefined : "Model selection authorization changed.";
         },
-        validateSelectionCommit: () =>
-          authorized ? undefined : "Model selection authorization changed.",
       }),
     );
     await authorizationChecked.promise;
@@ -887,7 +900,12 @@ describe("applySessionModelSelection", () => {
       status: "rejected",
       message: "Model selection authorization changed.",
     });
-    expect(loadSessionEntryReadOnly({ sessionKey, storePath })).toEqual(createEntry());
+    expect(authorizationChecks).toBe(2);
+    expect(loadSessionEntryReadOnly({ sessionKey, storePath })).toEqual(
+      create ? undefined : createEntry(),
+    );
+    expect(sessionEntry).toEqual(initial);
+    expect(sessionStore[sessionKey]).toEqual(create ? undefined : createEntry());
     expect(lifecycleEvents).toEqual([]);
     expect(effects.triggerSessionPatchHook).not.toHaveBeenCalled();
     expect(effects.refreshQueuedFollowupSession).not.toHaveBeenCalled();

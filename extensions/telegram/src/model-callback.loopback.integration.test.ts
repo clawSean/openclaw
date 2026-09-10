@@ -263,6 +263,8 @@ describe("Telegram model callback loopback", () => {
         "model",
         "context",
         "model",
+        "context",
+        "model",
       ]);
       const persistedEntry = listSessionEntries({ storePath })[0]?.entry;
       expect(persistedEntry).toMatchObject({
