@@ -21,6 +21,10 @@ export async function applyTelegramModelCallbackSelection(params: {
   threadSpec: ResolveTelegramSessionStateParams["threadSpec"];
   botHasTopicsEnabled: boolean;
   senderId: string;
+  expectedRoute: Pick<
+    ReturnType<TelegramCallbackMessageRuntime["resolveTelegramSessionState"]>,
+    "agentId" | "sessionKey" | "storePath"
+  >;
   telegramDeps: RegisterTelegramHandlerParams["telegramDeps"];
   messageRuntime: Pick<TelegramCallbackMessageRuntime, "resolveTelegramSessionState">;
   editMessageWithButtons: TelegramCallbackMessageActions["editCallbackMessageWithButtons"];
@@ -34,6 +38,7 @@ export async function applyTelegramModelCallbackSelection(params: {
     threadSpec,
     botHasTopicsEnabled,
     senderId,
+    expectedRoute,
     telegramDeps,
     messageRuntime,
     editMessageWithButtons,
@@ -54,19 +59,22 @@ export async function applyTelegramModelCallbackSelection(params: {
       runtimeCfg,
     });
   const initialSessionState = resolveCurrentSessionState();
-  const modelData = await modelSupport.retry(async () => {
-    return await telegramDeps.buildModelsProviderData(runtimeCfg, initialSessionState.agentId, {
-      sessionEntry: initialSessionState.sessionEntry,
-    });
-  });
+  type CapturedRoute = Pick<
+    ReturnType<typeof resolveCurrentSessionState>,
+    "agentId" | "sessionKey" | "storePath"
+  >;
+  const matchesCapturedRoute = (
+    candidate: ReturnType<typeof resolveCurrentSessionState>,
+    captured: CapturedRoute,
+  ) =>
+    candidate.agentId === captured.agentId &&
+    candidate.sessionKey === captured.sessionKey &&
+    candidate.storePath === captured.storePath;
   const rejectChangedRoute = async (
     sessionState: ReturnType<typeof resolveCurrentSessionState>,
+    captured: CapturedRoute = initialSessionState,
   ): Promise<boolean> => {
-    if (
-      sessionState.agentId === initialSessionState.agentId &&
-      sessionState.sessionKey === initialSessionState.sessionKey &&
-      sessionState.storePath === initialSessionState.storePath
-    ) {
+    if (matchesCapturedRoute(sessionState, captured)) {
       return false;
     }
     await modelSupport.retry(() =>
@@ -77,6 +85,14 @@ export async function applyTelegramModelCallbackSelection(params: {
     );
     return true;
   };
+  if (await rejectChangedRoute(initialSessionState, expectedRoute)) {
+    return;
+  }
+  const modelData = await modelSupport.retry(async () => {
+    return await telegramDeps.buildModelsProviderData(runtimeCfg, initialSessionState.agentId, {
+      sessionEntry: initialSessionState.sessionEntry,
+    });
+  });
   let sessionState = resolveCurrentSessionState();
   if (await rejectChangedRoute(sessionState)) {
     return;
@@ -152,13 +168,19 @@ export async function applyTelegramModelCallbackSelection(params: {
     const previousAuthProfileId = sessionEntry.authProfileOverride?.trim();
     const sessionStore = { [sessionState.sessionKey]: sessionEntry };
     const validateSelectionAuthorization = async (): Promise<string | undefined> => {
-      if (await reauthorizeCallback()) {
-        return undefined;
+      if (!(await reauthorizeCallback())) {
+        logVerbose(
+          `Blocked telegram model callback from ${senderId || "unknown"} (authorization revoked during session update)`,
+        );
+        return "Model selection authorization changed. Reopen /model and try again.";
       }
-      logVerbose(
-        `Blocked telegram model callback from ${senderId || "unknown"} (authorization revoked during session update)`,
-      );
-      return "Model selection authorization changed. Reopen /model and try again.";
+      if (!matchesCapturedRoute(resolveCurrentSessionState(), sessionState)) {
+        logVerbose(
+          `Blocked telegram model callback from ${senderId || "unknown"} (routing changed during session update)`,
+        );
+        return "Model routing changed while this selection was being applied. Reopen /model and try again.";
+      }
+      return undefined;
     };
     const validateSelectionCommit = (): string | undefined =>
       telegramDeps.getRuntimeConfig() === runtimeCfg

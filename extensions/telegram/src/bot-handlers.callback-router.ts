@@ -627,6 +627,7 @@ async function handleTelegramModelCallback(params: {
     threadSpec,
     botHasTopicsEnabled: resolveTelegramBotHasTopicsEnabled(ctx.me),
     senderId,
+    expectedRoute: sessionState,
     telegramDeps,
     messageRuntime,
     editMessageWithButtons,

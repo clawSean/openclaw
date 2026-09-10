@@ -50,6 +50,11 @@ describe("applyTelegramModelCallbackSelection", () => {
         threadSpec: { scope: "dm" },
         botHasTopicsEnabled: false,
         senderId: "9",
+        expectedRoute: {
+          agentId: "main",
+          sessionKey: "agent:main:telegram:direct:1234",
+          storePath: "/tmp/agent-a-sessions.json",
+        },
         telegramDeps: {
           getRuntimeConfig: () => currentCfg,
           buildModelsProviderData: async () => ({
@@ -155,6 +160,7 @@ describe("applyTelegramModelCallbackSelection", () => {
         threadSpec: { scope: "dm" },
         botHasTopicsEnabled: false,
         senderId: "9",
+        expectedRoute: routedSession,
         telegramDeps: telegramDeps as never,
         messageRuntime: {
           resolveTelegramSessionState: vi.fn(() => routedSession),
@@ -181,6 +187,142 @@ describe("applyTelegramModelCallbackSelection", () => {
       );
     } finally {
       finishCatalog.resolve();
+      applySessionModelSelection.mockRestore();
+    }
+  });
+
+  it("rejects a route that changed before final model resolution starts", async () => {
+    const cfg: OpenClawConfig = {};
+    const buildModelsProviderData = vi.fn();
+    const editMessageWithButtons = vi.fn(async () => undefined);
+
+    await applyTelegramModelCallbackSelection({
+      callback: { type: "select", provider: "openai", model: "gpt-5.4" },
+      expectedSelection: { provider: "openai", model: "gpt-5.4" },
+      chatId: 1234,
+      isGroup: false,
+      threadSpec: { scope: "dm" },
+      botHasTopicsEnabled: false,
+      senderId: "9",
+      expectedRoute: {
+        agentId: "agent-a",
+        sessionKey: "agent:agent-a:telegram:direct:1234",
+        storePath: "/tmp/agent-a-sessions.json",
+      },
+      telegramDeps: {
+        getRuntimeConfig: () => cfg,
+        buildModelsProviderData,
+      } as never,
+      messageRuntime: {
+        resolveTelegramSessionState: vi.fn(() => ({
+          agentId: "agent-b",
+          sessionKey: "agent:agent-b:telegram:direct:1234",
+          storePath: "/tmp/agent-b-sessions.json",
+          sessionEntry: { sessionId: "session-b", updatedAt: Date.now() },
+          model: "openai/gpt-5.4",
+        })),
+      },
+      editMessageWithButtons,
+      reauthorizeCallback: async () => true,
+    });
+
+    expect(buildModelsProviderData).not.toHaveBeenCalled();
+    expect(editMessageWithButtons).toHaveBeenCalledWith(
+      "❌ Model routing changed while this selection was loading. Reopen /model and try again.",
+      [],
+    );
+  });
+
+  it("revalidates the routed session while selection persistence is queued", async () => {
+    const cfg: OpenClawConfig = {
+      agents: {
+        defaults: {
+          model: "openai/gpt-5.4",
+          models: { "openai/gpt-5.4": {} },
+        },
+        list: [{ id: "agent-a", default: true }, { id: "agent-b" }],
+      },
+    };
+    const initialSession = {
+      agentId: "agent-a",
+      sessionKey: "agent:agent-a:telegram:direct:1234",
+      storePath: "/tmp/agent-a-sessions.json",
+      sessionEntry: { sessionId: "session-a", updatedAt: Date.now() },
+      model: "openai/gpt-5.4",
+    };
+    let routedSession = initialSession;
+    const persistenceQueued = createDeferred<void>();
+    const releasePersistence = createDeferred<void>();
+    const applySessionModelSelection = vi
+      .spyOn(modelSessionRuntime, "applySessionModelSelection")
+      .mockImplementation(async (selectionParams) => {
+        persistenceQueued.resolve();
+        await releasePersistence.promise;
+        const authorizationError = await selectionParams.validateSelectionAuthorization?.();
+        return authorizationError
+          ? {
+              status: "rejected",
+              reason: "not-allowed",
+              message: authorizationError,
+            }
+          : {
+              status: "applied",
+              changed: true,
+              provider: "openai",
+              model: "gpt-5.4",
+              effectiveModelRef: "openai/gpt-5.4",
+              agentRuntime: "openclaw",
+              contextTokens: 0,
+            };
+      });
+    const editMessageWithButtons = vi.fn(async () => undefined);
+
+    try {
+      const callbackPromise = applyTelegramModelCallbackSelection({
+        callback: { type: "select", provider: "openai", model: "gpt-5.4" },
+        expectedSelection: { provider: "openai", model: "gpt-5.4" },
+        chatId: 1234,
+        isGroup: false,
+        threadSpec: { scope: "dm" },
+        botHasTopicsEnabled: false,
+        senderId: "9",
+        expectedRoute: initialSession,
+        telegramDeps: {
+          getRuntimeConfig: () => cfg,
+          buildModelsProviderData: async () => ({
+            providers: ["openai"],
+            byProvider: new Map([["openai", new Set(["gpt-5.4"])]]),
+            modelCatalog: [{ provider: "openai", id: "gpt-5.4" }],
+          }),
+          resolveStorePath: ((_store, { agentId } = {}) =>
+            `/tmp/${agentId}-sessions.json`) satisfies ResolveStorePathFn,
+          getSessionEntry: () => initialSession.sessionEntry,
+        } as never,
+        messageRuntime: {
+          resolveTelegramSessionState: vi.fn(() => routedSession),
+        },
+        editMessageWithButtons,
+        reauthorizeCallback: async () => true,
+      });
+
+      await persistenceQueued.promise;
+      routedSession = {
+        agentId: "agent-b",
+        sessionKey: "agent:agent-b:telegram:direct:1234",
+        storePath: "/tmp/agent-b-sessions.json",
+        sessionEntry: { sessionId: "session-b", updatedAt: Date.now() },
+        model: "openai/gpt-5.4",
+      };
+      releasePersistence.resolve();
+      await callbackPromise;
+
+      expect(editMessageWithButtons).toHaveBeenCalledTimes(1);
+      expect(editMessageWithButtons).toHaveBeenLastCalledWith(
+        "❌ Model routing changed while this selection was being applied. Reopen /model and try again.",
+        [],
+      );
+    } finally {
+      releasePersistence.resolve();
       applySessionModelSelection.mockRestore();
     }
   });

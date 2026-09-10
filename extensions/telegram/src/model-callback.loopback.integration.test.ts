@@ -193,12 +193,9 @@ describe("Telegram model callback loopback", () => {
           callbackSteps.push("sender");
           return true;
         },
-        resolveTelegramModelCallbackAuthorization: async () => {
+        isTelegramModelCallbackAuthorized: async () => {
           callbackSteps.push("model");
-          return {
-            authorized: true,
-            ownerAccess: { ownerList: [], senderIsOwner: true },
-          };
+          return true;
         },
         reauthorizeTelegramModelCallback: async () => {
           callbackSteps.push("context", "model");
