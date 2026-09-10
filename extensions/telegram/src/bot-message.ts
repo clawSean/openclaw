@@ -234,13 +234,17 @@ export const createTelegramMessageProcessor = (deps: TelegramMessageProcessorDep
       upsertPairingRequest: telegramDeps.upsertChannelPairingRequest,
     });
     if (!context) {
+      const skippedBeforeDispatch = await turnContext.shouldSkipBeforeDispatch?.();
       if (ingressDebugEnabled && ingressReceivedAtMs && ingressContextStartMs) {
         logVerbose(
           `telegram ingress: chatId=${primaryCtx.message.chat.id} dropped after ${Date.now() - ingressReceivedAtMs}ms` +
             (options?.ingressBuffer ? ` buffer=${options.ingressBuffer}` : ""),
         );
       }
-      const result: TelegramMessageProcessingResult = { kind: "skipped" };
+      const result: TelegramMessageProcessingResult =
+        skippedBeforeDispatch && turnContext.deferCancelledBeforeDispatchSettlement
+          ? { kind: "skipped", reason: "cancelled-before-dispatch" }
+          : { kind: "skipped" };
       recordCurrentUpdateProcessingResult(result);
       return result;
     }
