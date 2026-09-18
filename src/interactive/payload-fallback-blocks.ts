@@ -2,7 +2,7 @@ import type {
   MessagePresentationChartBlock,
   MessagePresentationTableBlock,
   MessagePresentationTableCell,
-} from "./payload.js";
+} from "./payload-structured-block-types.js";
 
 export function renderMessagePresentationChartFallbackText(
   block: MessagePresentationChartBlock,
