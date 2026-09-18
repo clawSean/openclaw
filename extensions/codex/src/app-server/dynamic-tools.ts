@@ -44,6 +44,8 @@ import {
   consumeTrustedToolNoStartError,
   copyInternalToolResultState,
   getCoreTtsToolResultMediaUrls,
+  normalizeAcceptedSessionSpawnResult,
+  type AcceptedSessionSpawn,
 } from "openclaw/plugin-sdk/agent-harness-tool-runtime";
 import { emitTrustedDiagnosticEvent } from "openclaw/plugin-sdk/diagnostic-runtime";
 import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
@@ -56,7 +58,6 @@ import {
   asNonArrayRecord,
   asOptionalRecord,
   isRecord,
-  normalizeOptionalString,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import {
   DEFAULT_MAX_LIVE_TOOL_RESULT_CHARS,
@@ -219,23 +220,10 @@ export type CodexDynamicToolBridge = {
     coreTtsToolResults: object[];
     toolAudioAsVoice: boolean;
     successfulCronAdds?: number;
-    acceptedSessionSpawns: Array<{ runId: string; childSessionKey: string }>;
+    acceptedSessionSpawns: AcceptedSessionSpawn[];
     quarantinedTools: CodexDynamicToolSchemaQuarantine[];
   };
 };
-
-function normalizeAcceptedSessionSpawn(result: unknown): {
-  runId: string;
-  childSessionKey: string;
-} | null {
-  const details = asOptionalRecord(asOptionalRecord(result)?.details);
-  if (!details || details.status !== "accepted") {
-    return null;
-  }
-  const runId = normalizeOptionalString(details.runId);
-  const childSessionKey = normalizeOptionalString(details.childSessionKey);
-  return runId && childSessionKey ? { runId, childSessionKey } : null;
-}
 
 function computerFrameImageIdentity(
   content: AgentToolResult<unknown>["content"] | undefined,
@@ -604,7 +592,7 @@ export function createCodexDynamicToolBridge(params: {
         // A successful spawn is durable before presentation middleware can rewrite details.
         const acceptedSessionSpawn =
           toolName === "sessions_spawn" && !rawIsError
-            ? normalizeAcceptedSessionSpawn(telemetryRawResult)
+            ? normalizeAcceptedSessionSpawnResult(telemetryRawResult)
             : null;
         if (acceptedSessionSpawn) {
           telemetry.acceptedSessionSpawns.push(acceptedSessionSpawn);
