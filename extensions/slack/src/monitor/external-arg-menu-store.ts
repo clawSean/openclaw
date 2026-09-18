@@ -17,9 +17,16 @@ const SLACK_EXTERNAL_ARG_MENU_TTL_MS = 10 * 60 * 1000;
 export const SLACK_EXTERNAL_ARG_MENU_PREFIX = "openclaw_cmdarg_ext:";
 
 export type SlackExternalArgMenuChoice = { label: string; value: string; searchValue: string };
-type SlackExternalArgMenuEntry = {
+export type SlackExternalArgMenuScope = {
+  accountId: string;
+  teamId: string;
+  channelId: string;
+  channelType: "im" | "mpim" | "channel" | "group";
+};
+export type SlackExternalArgMenuEntry = {
   choices: SlackExternalArgMenuChoice[];
   userId: string;
+  scope: SlackExternalArgMenuScope;
   expiresAt: number;
 };
 
@@ -52,7 +59,11 @@ export function createSlackExternalArgMenuStore() {
 
   return {
     create(
-      params: { choices: SlackExternalArgMenuChoice[]; userId: string },
+      params: {
+        choices: SlackExternalArgMenuChoice[];
+        userId: string;
+        scope: SlackExternalArgMenuScope;
+      },
       now = Date.now(),
     ): string {
       pruneSlackExternalArgMenuStore(store, now);
@@ -64,6 +75,7 @@ export function createSlackExternalArgMenuStore() {
         store.set(token, {
           choices: params.choices,
           userId: params.userId,
+          scope: params.scope,
           expiresAt,
         });
       }

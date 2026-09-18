@@ -69,6 +69,7 @@ import { resolveSlackListenerEventScope, type SlackEventScope } from "./event-sc
 import {
   createSlackExternalArgMenuStore,
   type SlackExternalArgMenuChoice,
+  type SlackExternalArgMenuScope,
 } from "./external-arg-menu-store.js";
 import { resolveSlackSessionEventRoutingContext } from "./message-handler/prepare-routing.js";
 import { isSlackChannelAllowedByPolicy } from "./policy.js";
@@ -78,6 +79,10 @@ import {
 } from "./response-url-budget.js";
 import { resolveSlackRoomContextHints } from "./room-context.js";
 import { captureSlackSessionTargetGuard } from "./session-run-targets.js";
+import {
+  isSlackExternalArgMenuRequestAuthorized,
+  isSlackNativeArgMenuAuthorized,
+} from "./slash-arg-menu-auth.js";
 
 type SlackCommandHandlerArgs = SlackCommandMiddlewareArgs &
   Pick<AllMiddlewareArgs, "context" | "client">;
@@ -159,10 +164,12 @@ const slackExternalArgMenuStore = createSlackExternalArgMenuStore();
 function storeSlackExternalArgMenu(params: {
   choices: EncodedMenuChoice[];
   userId: string;
+  scope: SlackExternalArgMenuScope;
 }): string {
   return slackExternalArgMenuStore.create({
     choices: params.choices,
     userId: params.userId,
+    scope: params.scope,
   });
 }
 
@@ -468,7 +475,18 @@ export function createSlackCommandHandler(params: {
         return resolvedSlashRoute;
       };
 
-      if (commandDefinition && supportsInteractiveArgMenus) {
+      if (
+        commandDefinition &&
+        supportsInteractiveArgMenus &&
+        isSlackNativeArgMenuAuthorized({
+          ctx,
+          eventScope,
+          userId: command.user_id,
+          channelId: command.channel_id,
+          channelType: channelType ?? "channel",
+          commandAuthorized,
+        })
+      ) {
         const { resolveCommandArgMenu } = await loadSlashCommandsRuntime();
         const menuNeedsModelContext =
           !(commandArgs?.raw && !commandArgs.values) &&
@@ -521,7 +539,16 @@ export function createSlackCommandHandler(params: {
             userId: command.user_id,
             supportsExternalSelect: params.supportsExternalArgMenus?.() ?? false,
             createStoredMenu: (choices) =>
-              storeSlackExternalArgMenu({ choices, userId: command.user_id }),
+              storeSlackExternalArgMenu({
+                choices,
+                userId: command.user_id,
+                scope: {
+                  accountId: ctx.accountId,
+                  teamId: eventScope?.teamId ?? ctx.teamId,
+                  channelId: command.channel_id,
+                  channelType: channelType ?? "channel",
+                },
+              }),
           });
           await respond({
             text: title,
@@ -936,7 +963,8 @@ export async function registerSlackMonitorSlashCommands(params: {
     }
     appWithOptions.options(SLACK_COMMAND_ARG_ACTION_ID, async (args) => {
       const { ack, body } = args;
-      if (resolveEventScope(args) === null) {
+      const eventScope = resolveEventScope(args);
+      if (eventScope === null) {
         await ack({ options: [] });
         return;
       }
@@ -949,6 +977,8 @@ export async function registerSlackMonitorSlashCommands(params: {
       const typedBody = body as {
         value?: string;
         user?: { id?: string };
+        team?: { id?: string };
+        channel?: { id?: string };
         actions?: Array<{ block_id?: string }>;
         block_id?: string;
       };
@@ -965,6 +995,27 @@ export async function registerSlackMonitorSlashCommands(params: {
       }
       const requesterUserId = typedBody.user?.id?.trim();
       if (!requesterUserId || requesterUserId !== entry.userId) {
+        await ack({ options: [] });
+        return;
+      }
+      const bodyTeamId = typedBody.team?.id?.trim();
+      const bodyChannelId = typedBody.channel?.id?.trim();
+      if (
+        (bodyTeamId && bodyTeamId !== entry.scope.teamId) ||
+        (bodyChannelId && bodyChannelId !== entry.scope.channelId)
+      ) {
+        await ack({ options: [] });
+        return;
+      }
+      const liveCtx = await ctx.readRuntimeContext().catch(() => undefined);
+      if (
+        !liveCtx ||
+        !(await isSlackExternalArgMenuRequestAuthorized({
+          ctx: liveCtx,
+          eventScope,
+          entry,
+        }))
+      ) {
         await ack({ options: [] });
         return;
       }
