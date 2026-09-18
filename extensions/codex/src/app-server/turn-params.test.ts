@@ -2,6 +2,7 @@ import { resolveThinkingDefault } from "openclaw/plugin-sdk/agent-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createAppServerOptions,
+  createDefaultCurrentReplyAdditionalContextExpectation,
   createParams,
   resetThreadLifecycleTestFixtures,
 } from "./thread-lifecycle.test-fixtures.js";
@@ -77,16 +78,7 @@ describe("buildTurnStartParams temporal context", () => {
     const firstTurn = buildTurnStartParams(params, options);
     expect(firstTurn.input).toEqual([{ type: "text", text: "run exactly", text_elements: [] }]);
     expect(firstTurn.additionalContext).toEqual({
-      openclaw_current_reply: {
-        kind: "application",
-        value: expect.stringContaining(
-          '{"replyTargetPresent":false,"quotePresent":false,"replyChainPresent":false}',
-        ),
-      },
-      openclaw_current_reply_identifiers: {
-        kind: "untrusted",
-        value: expect.stringContaining("{}"),
-      },
+      ...createDefaultCurrentReplyAdditionalContextExpectation(),
       openclaw_source_delivery: {
         kind: "application",
         value: expect.stringContaining("reply normally in your final assistant message"),
