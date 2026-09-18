@@ -12,6 +12,8 @@ import {
 } from "./payload-fallback-blocks.js";
 import type {
   MessagePresentationChartBlock,
+  MessagePresentationChartSegment,
+  MessagePresentationChartSeries,
   MessagePresentationTableBlock,
   MessagePresentationTableCell,
 } from "./payload-structured-block-types.js";
