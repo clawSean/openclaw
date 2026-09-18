@@ -6,6 +6,15 @@ import {
 } from "@openclaw/normalization-core/string-coerce";
 import { isWellFormedApprovalId } from "../../packages/gateway-protocol/src/schema/approval-id.js";
 import type { ChannelApprovalKind } from "../infra/approval-types.js";
+import {
+  renderMessagePresentationChartFallbackText,
+  renderMessagePresentationTableFallbackText,
+} from "./payload-fallback-blocks.js";
+
+export {
+  renderMessagePresentationChartFallbackText,
+  renderMessagePresentationTableFallbackText,
+} from "./payload-fallback-blocks.js";
 
 const PRESENTATION_FALLBACK_CONTINUATION = Symbol.for(
   "openclaw.presentation.fallback-continuation",
@@ -1097,51 +1106,6 @@ export const interactiveReplyToPresentation = legacyInteractiveReplyToPresentati
  *
  * Exported through the plugin SDK for channel adapters.
  */
-export function renderMessagePresentationChartFallbackText(
-  block: MessagePresentationChartBlock,
-): string {
-  const lines = [`${block.title} (${block.chartType} chart)`];
-  if (block.chartType === "pie") {
-    lines.push(...block.segments.map((segment) => `- ${segment.label}: ${String(segment.value)}`));
-    return lines.join("\n");
-  }
-  if (block.xLabel) {
-    lines.push(`X axis: ${block.xLabel}`);
-  }
-  if (block.yLabel) {
-    lines.push(`Y axis: ${block.yLabel}`);
-  }
-  lines.push(
-    ...block.series.map(
-      (series) =>
-        `- ${series.name}: ${block.categories
-          .map((category, index) => `${category}: ${String(series.values[index])}`)
-          .join("; ")}`,
-    ),
-  );
-  return lines.join("\n");
-}
-
-function renderTableFallbackValue(value: MessagePresentationTableCell): string {
-  return String(value).replace(/\s+/g, " ").trim();
-}
-
-export function renderMessagePresentationTableFallbackText(
-  block: MessagePresentationTableBlock,
-): string {
-  const headers = block.headers.map(renderTableFallbackValue);
-  const lines = [`${renderTableFallbackValue(block.caption)} (table)`];
-  lines.push(
-    ...block.rows.map(
-      (row) =>
-        `- ${row
-          .map((cell, index) => `${headers[index]}: ${renderTableFallbackValue(cell)}`)
-          .join("; ")}`,
-    ),
-  );
-  return lines.join("\n");
-}
-
 /** Keep only operator-visible navigation and public command text in control fallbacks. */
 export function renderMessagePresentationControlFallbackLabel(
   control: Pick<
