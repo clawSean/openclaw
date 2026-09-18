@@ -21,10 +21,7 @@ export async function applyTelegramModelCallbackSelection(params: {
   threadSpec: ResolveTelegramSessionStateParams["threadSpec"];
   botHasTopicsEnabled: boolean;
   senderId: string;
-  expectedRoute: Pick<
-    ReturnType<TelegramCallbackMessageRuntime["resolveTelegramSessionState"]>,
-    "agentId" | "sessionKey" | "storePath"
-  >;
+  initialSessionState: ReturnType<TelegramCallbackMessageRuntime["resolveTelegramSessionState"]>;
   telegramDeps: RegisterTelegramHandlerParams["telegramDeps"];
   messageRuntime: Pick<TelegramCallbackMessageRuntime, "resolveTelegramSessionState">;
   editMessageWithButtons: TelegramCallbackMessageActions["editCallbackMessageWithButtons"];
@@ -38,7 +35,7 @@ export async function applyTelegramModelCallbackSelection(params: {
     threadSpec,
     botHasTopicsEnabled,
     senderId,
-    expectedRoute,
+    initialSessionState,
     telegramDeps,
     messageRuntime,
     editMessageWithButtons,
@@ -58,7 +55,6 @@ export async function applyTelegramModelCallbackSelection(params: {
       senderId,
       runtimeCfg,
     });
-  const initialSessionState = resolveCurrentSessionState();
   type CapturedRoute = Pick<
     ReturnType<typeof resolveCurrentSessionState>,
     "agentId" | "sessionKey" | "storePath"
@@ -85,7 +81,7 @@ export async function applyTelegramModelCallbackSelection(params: {
     );
     return true;
   };
-  if (await rejectChangedRoute(initialSessionState, expectedRoute)) {
+  if (await rejectChangedRoute(resolveCurrentSessionState(), initialSessionState)) {
     return;
   }
   const modelData = await modelSupport.retry(async () => {
@@ -156,7 +152,11 @@ export async function applyTelegramModelCallbackSelection(params: {
     });
     const isDefaultSelection =
       selection.provider === resolvedDefault.provider && selection.model === resolvedDefault.model;
+    // Preserve the first authoritative session snapshot through route rechecks.
+    // The persistence owner uses its session id to reject a replacement and its
+    // lock bit to reject a callback that was already stale when it was received.
     const persistedSessionEntry =
+      initialSessionState.sessionEntry ??
       sessionState.sessionEntry ??
       telegramDeps.getSessionEntry?.({ storePath, sessionKey: sessionState.sessionKey }) ??
       getSessionEntry({ storePath, sessionKey: sessionState.sessionKey });

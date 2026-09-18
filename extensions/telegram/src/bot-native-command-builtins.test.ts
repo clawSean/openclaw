@@ -393,11 +393,13 @@ describe("Telegram native command built-ins", () => {
       cfg: {},
       allowFrom: ["*"],
     });
+    const next = vi.fn(async () => {});
 
-    await handler(createTelegramPrivateCommandContext());
+    await handler(createTelegramPrivateCommandContext(), next);
 
+    expect(next).toHaveBeenCalledOnce();
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(replyMocks.dispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(1);
+    expect(replyMocks.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
   });
 
   it("dispatches an ordinary command when its only menu callback would exceed Telegram's limit", async () => {
@@ -420,11 +422,13 @@ describe("Telegram native command built-ins", () => {
       cfg: {},
       allowFrom: ["*"],
     });
+    const next = vi.fn(async () => {});
 
-    await handler(createTelegramPrivateCommandContext());
+    await handler(createTelegramPrivateCommandContext(), next);
 
+    expect(next).toHaveBeenCalledOnce();
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(replyMocks.dispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(1);
+    expect(replyMocks.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
   });
 
   it("uses the read-only catalog for Claude CLI thinking menus", async () => {

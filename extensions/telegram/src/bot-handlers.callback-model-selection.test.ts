@@ -50,10 +50,12 @@ describe("applyTelegramModelCallbackSelection", () => {
         threadSpec: { scope: "dm" },
         botHasTopicsEnabled: false,
         senderId: "9",
-        expectedRoute: {
+        initialSessionState: {
           agentId: "main",
           sessionKey: "agent:main:telegram:direct:1234",
           storePath: "/tmp/agent-a-sessions.json",
+          sessionEntry,
+          model: "openai/gpt-5.4",
         },
         telegramDeps: {
           getRuntimeConfig: () => currentCfg,
@@ -160,7 +162,7 @@ describe("applyTelegramModelCallbackSelection", () => {
         threadSpec: { scope: "dm" },
         botHasTopicsEnabled: false,
         senderId: "9",
-        expectedRoute: routedSession,
+        initialSessionState: routedSession,
         telegramDeps: telegramDeps as never,
         messageRuntime: {
           resolveTelegramSessionState: vi.fn(() => routedSession),
@@ -204,10 +206,12 @@ describe("applyTelegramModelCallbackSelection", () => {
       threadSpec: { scope: "dm" },
       botHasTopicsEnabled: false,
       senderId: "9",
-      expectedRoute: {
+      initialSessionState: {
         agentId: "agent-a",
         sessionKey: "agent:agent-a:telegram:direct:1234",
         storePath: "/tmp/agent-a-sessions.json",
+        sessionEntry: undefined,
+        model: "openai/gpt-5.4",
       },
       telegramDeps: {
         getRuntimeConfig: () => cfg,
@@ -286,7 +290,7 @@ describe("applyTelegramModelCallbackSelection", () => {
         threadSpec: { scope: "dm" },
         botHasTopicsEnabled: false,
         senderId: "9",
-        expectedRoute: initialSession,
+        initialSessionState: initialSession,
         telegramDeps: {
           getRuntimeConfig: () => cfg,
           buildModelsProviderData: async () => ({
