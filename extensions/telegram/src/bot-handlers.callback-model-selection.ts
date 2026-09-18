@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { applySessionModelSelection } from "openclaw/plugin-sdk/model-session-runtime";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
-import { getSessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
 import { resolveDefaultModelForAgent } from "./bot-handlers.agent.runtime.js";
 import type { TelegramCallbackMessageActions } from "./bot-handlers.callback-actions.js";
 import * as modelSupport from "./bot-handlers.callback-model.js";
@@ -41,6 +40,13 @@ export async function applyTelegramModelCallbackSelection(params: {
     editMessageWithButtons,
     reauthorizeCallback,
   } = params;
+  // Capture session ownership before catalog or authorization work can yield.
+  // A new authoritative row must conflict with this callback-owned identity.
+  const sessionEntryMissing = initialSessionState.sessionEntry === undefined;
+  const sessionEntry = initialSessionState.sessionEntry ?? {
+    sessionId: randomUUID(),
+    updatedAt: Date.now(),
+  };
 
   // Opaque callbacks resolve against a catalog asynchronously. Rebuild the routed
   // session and its model policy from the current runtime snapshot after that await
@@ -152,19 +158,6 @@ export async function applyTelegramModelCallbackSelection(params: {
     });
     const isDefaultSelection =
       selection.provider === resolvedDefault.provider && selection.model === resolvedDefault.model;
-    // Preserve the first authoritative session snapshot through route rechecks.
-    // The persistence owner uses its session id to reject a replacement and its
-    // lock bit to reject a callback that was already stale when it was received.
-    const persistedSessionEntry =
-      initialSessionState.sessionEntry ??
-      sessionState.sessionEntry ??
-      telegramDeps.getSessionEntry?.({ storePath, sessionKey: sessionState.sessionKey }) ??
-      getSessionEntry({ storePath, sessionKey: sessionState.sessionKey });
-    const sessionEntryMissing = persistedSessionEntry === undefined;
-    const sessionEntry = persistedSessionEntry ?? {
-      sessionId: randomUUID(),
-      updatedAt: Date.now(),
-    };
     const previousAuthProfileId = sessionEntry.authProfileOverride?.trim();
     const sessionStore = { [sessionState.sessionKey]: sessionEntry };
     const validateSelectionAuthorization = async (): Promise<string | undefined> => {

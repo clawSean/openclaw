@@ -1,6 +1,10 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import * as modelSessionRuntime from "openclaw/plugin-sdk/model-session-runtime";
+import { getSessionEntry, upsertSessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
 import { describe, expect, it, vi } from "vitest";
 import { applyTelegramModelCallbackSelection } from "./bot-handlers.callback-model-selection.js";
 
@@ -235,6 +239,89 @@ describe("applyTelegramModelCallbackSelection", () => {
       "❌ Model routing changed while this selection was loading. Reopen /model and try again.",
       [],
     );
+  });
+
+  it("rejects when the initially missing routed session appears during catalog lookup", async () => {
+    const cfg: OpenClawConfig = {
+      agents: {
+        defaults: {
+          model: "openai/gpt-5.4",
+          models: { "openai/gpt-5.4": {} },
+        },
+      },
+    };
+    const tempRoot = await mkdtemp(join(tmpdir(), "openclaw-telegram-model-callback-"));
+    const storePath = join(tempRoot, "sessions.json");
+    const sessionKey = "agent:main:telegram:direct:1234";
+    const authoritativeEntry = {
+      sessionId: "authoritative-session",
+      updatedAt: Date.now(),
+      providerOverride: "anthropic",
+      modelOverride: "claude-opus-4-6",
+    };
+    let currentSessionEntry: typeof authoritativeEntry | undefined;
+    const catalogStarted = createDeferred<void>();
+    const finishCatalog = createDeferred<void>();
+    const editMessageWithButtons = vi.fn(async () => undefined);
+
+    try {
+      const callbackPromise = applyTelegramModelCallbackSelection({
+        callback: { type: "select", provider: "openai", model: "gpt-5.4" },
+        expectedSelection: { provider: "openai", model: "gpt-5.4" },
+        chatId: 1234,
+        isGroup: false,
+        threadSpec: { scope: "dm" },
+        botHasTopicsEnabled: false,
+        senderId: "9",
+        initialSessionState: {
+          agentId: "main",
+          sessionKey,
+          storePath,
+          sessionEntry: undefined,
+          model: "openai/gpt-5.4",
+        },
+        telegramDeps: {
+          getRuntimeConfig: () => cfg,
+          buildModelsProviderData: async () => {
+            catalogStarted.resolve();
+            await finishCatalog.promise;
+            return {
+              providers: ["openai"],
+              byProvider: new Map([["openai", new Set(["gpt-5.4"])]]),
+              modelCatalog: [{ provider: "openai", id: "gpt-5.4" }],
+            };
+          },
+        } as never,
+        messageRuntime: {
+          resolveTelegramSessionState: vi.fn(() => ({
+            agentId: "main",
+            sessionKey,
+            storePath,
+            sessionEntry: currentSessionEntry,
+            model: "openai/gpt-5.4",
+          })),
+        },
+        editMessageWithButtons,
+        reauthorizeCallback: async () => true,
+      });
+
+      await catalogStarted.promise;
+      currentSessionEntry = authoritativeEntry;
+      await upsertSessionEntry({ sessionKey, storePath, entry: authoritativeEntry });
+      const storedAuthoritativeEntry = getSessionEntry({ sessionKey, storePath });
+      finishCatalog.resolve();
+      await callbackPromise;
+
+      expect(editMessageWithButtons).toHaveBeenCalledTimes(1);
+      expect(editMessageWithButtons).toHaveBeenCalledWith(
+        "❌ Model change was not applied because the session changed. Retry.",
+        [],
+      );
+      expect(getSessionEntry({ sessionKey, storePath })).toEqual(storedAuthoritativeEntry);
+    } finally {
+      finishCatalog.resolve();
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("revalidates the routed session while selection persistence is queued", async () => {

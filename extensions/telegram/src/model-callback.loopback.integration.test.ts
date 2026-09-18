@@ -6,7 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Bot } from "grammy";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { listSessionEntries, upsertSessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
+import {
+  getSessionEntry,
+  listSessionEntries,
+  upsertSessionEntry,
+} from "openclaw/plugin-sdk/session-store-runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import { defaultTelegramBotDeps, type TelegramBotDeps } from "./bot-deps.js";
 import type { TelegramCallbackMessageRuntime } from "./bot-handlers.callback-router-controls.js";
@@ -214,7 +218,7 @@ describe("Telegram model callback loopback", () => {
         },
         resolveTelegramSessionState: () => ({
           agentId: "main",
-          sessionEntry: undefined,
+          sessionEntry: getSessionEntry({ sessionKey, storePath }),
           sessionKey,
           storePath,
           model: undefined,
@@ -265,6 +269,7 @@ describe("Telegram model callback loopback", () => {
       ]);
       const persistedEntry = listSessionEntries({ storePath })[0]?.entry;
       expect(persistedEntry).toMatchObject({
+        sessionId: "existing-session",
         providerOverride: PROVIDER,
         modelOverride: MODEL,
         modelOverrideSource: "user",
