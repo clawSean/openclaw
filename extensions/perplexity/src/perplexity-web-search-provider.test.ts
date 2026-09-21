@@ -12,7 +12,9 @@ vi.mock("openclaw/plugin-sdk/provider-web-search", async (importOriginal) => {
   };
 });
 
+import { createPerplexityResearchTool } from "./perplexity-research-tool.js";
 import { createPerplexityWebSearchProvider } from "./perplexity-web-search-provider.js";
+import { executePerplexityResearch } from "./perplexity-web-search-provider.runtime.js";
 
 const openRouterApiKeyEnv = ["OPENROUTER_API", "KEY"].join("_");
 const perplexityApiKeyEnv = ["PERPLEXITY_API", "KEY"].join("_");
@@ -753,5 +755,103 @@ describe("perplexity web search provider", () => {
         );
       },
     );
+  });
+});
+
+describe("perplexity research tool runtime", () => {
+  beforeEach(() => {
+    withTrustedWebSearchEndpointMock.mockReset();
+  });
+
+  it("defaults to high effort and returns cited Agent API synthesis", async () => {
+    mockPerplexityResponseOnce(agentResponse("Grounded research", ["https://example.test/source"]));
+
+    await expect(
+      executePerplexityResearch(
+        { query: "Research OpenClaw" },
+        { perplexity: { apiKey: directPerplexityApiKey } },
+      ),
+    ).resolves.toEqual({
+      effort: "high",
+      content: expect.stringContaining("Grounded research"),
+      citations: ["https://example.test/source"],
+    });
+
+    const [request] = withTrustedWebSearchEndpointMock.mock.calls[0] as [
+      { url: string; init: RequestInit },
+    ];
+    expect(request.url).toBe("https://api.perplexity.ai/v1/agent");
+    expect(JSON.parse(request.init.body as string)).toEqual({
+      preset: "high",
+      input: "Research OpenClaw",
+    });
+    expect(withTrustedWebSearchEndpointMock).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutSeconds: 300 }),
+      expect.any(Function),
+    );
+  });
+
+  it("preserves the configured global web-search timeout through the registered tool", async () => {
+    mockPerplexityResponseOnce(agentResponse("Grounded research"));
+    const config = {
+      tools: { web: { search: { timeoutSeconds: 17 } } },
+      plugins: {
+        entries: {
+          perplexity: { config: { webSearch: { apiKey: directPerplexityApiKey } } },
+        },
+      },
+    };
+    const tool = createPerplexityResearchTool({ config } as never, { config } as never);
+
+    await tool.execute("call-1", { query: "Research OpenClaw" });
+
+    expect(withTrustedWebSearchEndpointMock).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutSeconds: 17 }),
+      expect.any(Function),
+    );
+  });
+
+  it("passes explicit xhigh effort and freshness to Agent API", async () => {
+    mockPerplexityResponseOnce(agentResponse("Fresh research"));
+
+    await executePerplexityResearch(
+      { query: "Recent OpenClaw changes", effort: "xhigh", freshness: "month" },
+      { perplexity: { apiKey: directPerplexityApiKey } },
+    );
+
+    const [request] = withTrustedWebSearchEndpointMock.mock.calls[0] as [{ init: RequestInit }];
+    expect(JSON.parse(request.init.body as string)).toEqual({
+      preset: "xhigh",
+      input: "Recent OpenClaw changes",
+      tools: [
+        {
+          type: "web_search",
+          filters: { search_recency_filter: "month" },
+        },
+      ],
+    });
+  });
+
+  it("rejects OpenRouter credentials without making a request", async () => {
+    await expect(
+      executePerplexityResearch(
+        { query: "Research OpenClaw" },
+        { perplexity: { apiKey: openRouterPerplexityApiKey } },
+      ),
+    ).resolves.toMatchObject({ error: "missing_perplexity_agent_api_key" });
+    expect(withTrustedWebSearchEndpointMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid effort without making a request", async () => {
+    await expect(
+      executePerplexityResearch(
+        { query: "Research OpenClaw", effort: "maximum" },
+        { perplexity: { apiKey: directPerplexityApiKey } },
+      ),
+    ).resolves.toEqual({
+      error: "invalid_effort",
+      message: "effort must be low, medium, high, or xhigh.",
+    });
+    expect(withTrustedWebSearchEndpointMock).not.toHaveBeenCalled();
   });
 });
