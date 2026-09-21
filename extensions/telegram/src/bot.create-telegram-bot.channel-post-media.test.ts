@@ -20,6 +20,7 @@ import {
   type TelegramMentionCaseForTest,
   type TelegramMentionPolicyForTest,
 } from "./bot.create-telegram-bot.test-support.js";
+import { addIgnoreAlbumTests } from "./channel-post-ignore.test-support.js";
 import { setTelegramPluginStateRuntimeForTests } from "./runtime-state.test-support.js";
 
 const saveRemoteMedia = vi.fn();
@@ -65,6 +66,7 @@ vi.mock("./sticker-cache.js", () => ({
 const harness = await import("./bot.create-telegram-bot.test-harness.js");
 const { getLoadConfigMock, getOnHandler, replySpy, sendMessageSpy, telegramBotDepsForTest } =
   harness;
+const ignoreAlbumOutputSpies = [replySpy, sendMessageSpy, saveRemoteMedia];
 const { createTelegramBotCore: createTelegramBotBase } = await import("./bot-core.js");
 const {
   getTelegramSpooledReplayDeferredParticipant,
@@ -328,6 +330,8 @@ describe("createTelegramBot channel_post media", () => {
     );
     rootRead.mockReset();
   });
+
+  addIgnoreAlbumTests(loadConfig, getChannelPostHandler, ignoreAlbumOutputSpies);
 
   it("buffers channel_post media groups and processes them together", async () => {
     setOpenChannelPostConfig();

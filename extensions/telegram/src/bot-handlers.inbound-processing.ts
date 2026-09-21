@@ -17,9 +17,11 @@ import {
 } from "./bot-handlers.debounce-key.js";
 import {
   createTelegramInboundBuffers,
+  type PendingBufferedMessageIgnore,
   type TelegramDebounceEntry,
 } from "./bot-handlers.inbound-buffer.js";
 import { createTelegramInboundMedia } from "./bot-handlers.inbound-media.js";
+import type { PendingMediaGroupIgnore } from "./bot-handlers.inbound-media.types.js";
 import {
   isDurablyRetryableInboundMediaError,
   isMediaSizeLimitError,
@@ -53,12 +55,15 @@ import { isTelegramControlLaneText } from "./sequential-key.js";
 
 export interface TelegramInboundProcessing {
   processInboundMessage: (params: TelegramInboundMessage) => Promise<TelegramInboundDisposition>;
+  beginPendingMediaGroupIgnore: (msg: Message) => PendingMediaGroupIgnore | undefined;
+  beginPendingBufferedMessageIgnore: (msg: Message) => PendingBufferedMessageIgnore | undefined;
 }
 
 type TelegramInboundMessage = {
   authorizationCfg: OpenClawConfig;
   ctx: TelegramContext;
   msg: Message;
+  ignoreEnabled: boolean;
   chatId: number;
   isGroup: boolean;
   isForum: boolean;
@@ -87,6 +92,7 @@ export function createTelegramInboundProcessing({
     runtime,
     mediaMaxBytes,
     logger,
+    removeMessageFromGroupHistory,
     resolveGroupActivation,
     resolveGroupRequireMention,
   },
@@ -102,10 +108,21 @@ export function createTelegramInboundProcessing({
     releaseDispatchDedupeClaims,
     createSpooledReplayParticipantForBufferedWork,
   } = message;
-  const { cancelPending, inboundDebouncer, resolveTelegramDebounceLane } =
-    createTelegramInboundBuffers({ params: { cfg, accountId, bot, runtime, opts }, message });
+  const {
+    cancelPending,
+    inboundDebouncer,
+    resolveTelegramDebounceLane,
+    beginPendingBufferedMessageIgnore,
+  } = createTelegramInboundBuffers({
+    params: { cfg, accountId, bot, runtime, opts, removeMessageFromGroupHistory },
+    message,
+  });
 
-  const { handleMediaGroup, resolveUnaddressedGroupMediaDisposition } = createTelegramInboundMedia({
+  const {
+    handleMediaGroup,
+    beginPendingMediaGroupIgnore,
+    resolveUnaddressedGroupMediaDisposition,
+  } = createTelegramInboundMedia({
     params: {
       accountId,
       bot,
@@ -113,6 +130,7 @@ export function createTelegramInboundProcessing({
       runtime,
       mediaMaxBytes,
       logger,
+      removeMessageFromGroupHistory,
       resolveGroupActivation,
       resolveGroupRequireMention,
     },
@@ -125,6 +143,7 @@ export function createTelegramInboundProcessing({
       authorizationCfg,
       ctx,
       msg,
+      ignoreEnabled,
       chatId,
       isGroup,
       isForum,
@@ -187,6 +206,7 @@ export function createTelegramInboundProcessing({
         authorizationCfg,
         ctx,
         msg,
+        ignoreEnabled,
         chatId,
         isGroup,
         isForum,
@@ -343,6 +363,10 @@ export function createTelegramInboundProcessing({
       ...promptContextBoundaryOptions(promptContextMinTimestampMs, promptContextAmbientWatermark),
       dispatchDedupeClaims,
       channelIngressResolvers: [channelIngressResolver],
+      cancelled: false,
+      dispatchAdmission: "pending",
+      dispatchAbortControllers: new Set(),
+      pendingIgnoreSettlements: new Set(),
     };
     const shouldBufferDebounce = inboundDebouncer.shouldBuffer(debounceEntry);
     if (shouldBufferDebounce) {
@@ -354,5 +378,9 @@ export function createTelegramInboundProcessing({
     return shouldBufferDebounce ? { kind: "buffered", buffer: "debounce" } : { kind: "processed" };
   };
 
-  return { processInboundMessage };
+  return {
+    processInboundMessage,
+    beginPendingMediaGroupIgnore,
+    beginPendingBufferedMessageIgnore,
+  };
 }

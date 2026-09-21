@@ -9,6 +9,7 @@ import {
   voiceMessage,
   forumMessage,
 } from "./bot-message-context.body.test-support.js";
+import { removeTelegramGroupHistoryEntry } from "./group-history-window.js";
 import { setTelegramRuntime } from "./runtime.js";
 
 const {
@@ -117,6 +118,8 @@ async function resolveBody(overrides: Partial<BodyParams> = {}) {
     effectiveGroupAllow: normalizeAllowFrom([]),
     effectiveDmAllow: normalizeAllowFrom([]),
     requireMention: false,
+    groupHistories: new Map(),
+    historyLimit: 0,
     logger: createLogger(),
     ...overrides,
   } as BodyParams);
@@ -403,6 +406,50 @@ describe("resolveTelegramInboundBody", () => {
       expect(result).toBeNull();
     },
   );
+
+  it.each([
+    {
+      name: "a non-primary buffered message",
+      sourceMessageId: "2",
+      overrides: {
+        options: {
+          bufferedMessages: [groupMessage({ message_id: 1 }), groupMessage({ message_id: 2 })],
+        },
+      },
+    },
+    {
+      name: "a non-primary album member",
+      sourceMessageId: "3",
+      overrides: {
+        allMedia: [
+          media("/tmp/album-1.jpg", "image", { sourceMessageId: "1" }),
+          media("/tmp/album-3.jpg", "image", { sourceMessageId: "3" }),
+        ],
+      },
+    },
+  ])("removes mention-skipped group history by $name", async ({ sourceMessageId, overrides }) => {
+    const groupHistories = new Map();
+    const logger = createLogger();
+
+    const result = await resolveGroup({
+      logger,
+      patterns: BOT_PATTERN,
+      message: { message_id: 1, text: "ambient private detail" },
+      overrides: { groupHistories, historyLimit: 5, ...overrides } as Partial<BodyParams>,
+    });
+    const historyKey = [...groupHistories.keys()][0];
+
+    expect(result).toBeNull();
+    expect([...groupHistories.values()].flat()).toHaveLength(1);
+    expect(
+      removeTelegramGroupHistoryEntry({
+        historyMap: groupHistories,
+        historyKey,
+        messageId: sourceMessageId,
+      }),
+    ).toBe(true);
+    expect(groupHistories.size).toBe(0);
+  });
 
   privateBodyTest(
     "renders Telegram text entities before building the agent body",

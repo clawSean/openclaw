@@ -29,10 +29,12 @@ type BuildTelegramMessageContextForTestParams = {
   replyChain?: BuildTelegramMessageContextParams["replyChain"];
   promptContext?: BuildTelegramMessageContextParams["promptContext"];
   options?: BuildTelegramMessageContextParams["options"];
+  deferInitialFeedback?: BuildTelegramMessageContextParams["deferInitialFeedback"];
   cfg?: Record<string, unknown>;
   accountId?: string;
   dmPolicy?: BuildTelegramMessageContextParams["dmPolicy"];
   historyLimit?: number;
+  groupHistories?: BuildTelegramMessageContextParams["groupHistories"];
   dmHistoryLimit?: number;
   ackReactionScope?: BuildTelegramMessageContextParams["ackReactionScope"];
   botApi?: Record<string, unknown>;
@@ -134,6 +136,7 @@ export async function buildTelegramMessageContextForTest(
     promptContext: params.promptContext ?? [],
     storeAllowFrom: [],
     options: params.options ?? {},
+    deferInitialFeedback: params.deferInitialFeedback,
     bot: {
       api: {
         sendChatAction: vi.fn(),
@@ -149,6 +152,7 @@ export async function buildTelegramMessageContextForTest(
     sessionRuntime,
     account: { accountId: params.accountId ?? "default" } as never,
     historyLimit: params.historyLimit ?? 0,
+    groupHistories: params.groupHistories ?? new Map(),
     dmHistoryLimit: params.dmHistoryLimit ?? 10,
     dmPolicy: params.dmPolicy ?? "open",
     allowFrom: ["*"],

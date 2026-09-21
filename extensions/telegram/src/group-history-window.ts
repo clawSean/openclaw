@@ -1,10 +1,12 @@
-import type { HistoryEntry } from "openclaw/plugin-sdk/reply-history";
+// Telegram plugin module implements group history window behavior.
+import { createChannelHistoryWindow, type HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import type {
   TelegramAmbientTranscriptWatermark,
   TelegramPromptContextEntry,
 } from "./bot-message-context.types.js";
 
 const TELEGRAM_SELF_SENDER_SUFFIX = " (you)";
+const telegramSourceMessageIdsByHistoryEntry = new WeakMap<HistoryEntry, ReadonlySet<string>>();
 
 export function buildTelegramSelfSenderName(
   configuredName?: string,
@@ -20,6 +22,33 @@ export function buildTelegramSelfSenderName(
 
 export function isTelegramSelfSenderName(name: string | undefined): name is string {
   return name?.endsWith(TELEGRAM_SELF_SENDER_SUFFIX) === true;
+}
+
+function isTelegramGroupHistorySelfEntry(entry: HistoryEntry): boolean {
+  return isTelegramSelfSenderName(entry.sender);
+}
+
+function telegramPromptMessageKey(message: Record<string, unknown>): string | undefined {
+  const messageId = message["message_id"];
+  const body = message["body"];
+  const timestampMs = message["timestamp_ms"];
+  if (typeof messageId === "string" && messageId.trim()) {
+    return `id:${messageId.trim()}`;
+  }
+  if (typeof body === "string" && typeof timestampMs === "number") {
+    return `text:${timestampMs}:${body.trim()}`;
+  }
+  return undefined;
+}
+
+function telegramHistoryEntryKey(entry: HistoryEntry): string | undefined {
+  if (entry.messageId?.trim()) {
+    return `id:${entry.messageId.trim()}`;
+  }
+  if (entry.timestamp !== undefined) {
+    return `text:${entry.timestamp}:${entry.body.trim()}`;
+  }
+  return undefined;
 }
 
 function numericMessageId(value: string | undefined): number | undefined {
@@ -75,87 +104,162 @@ function telegramPromptMessages(payload: Record<string, unknown> | undefined) {
     : [];
 }
 
+export function selectTelegramGroupHistoryAfterLastSelf(
+  entries: readonly HistoryEntry[],
+): HistoryEntry[] {
+  const lastSelfIndex = entries.findLastIndex(isTelegramGroupHistorySelfEntry);
+  return lastSelfIndex === -1 ? [...entries] : entries.slice(lastSelfIndex + 1);
+}
+
 export function isTelegramChatWindowPromptContext(entry: TelegramPromptContextEntry): boolean {
   return entry.source === "telegram" && entry.type === "chat_window";
 }
 
-export function telegramPromptContextHistory(
-  promptContext: readonly TelegramPromptContextEntry[],
-): HistoryEntry[] {
-  return promptContext.flatMap((entry) =>
-    isTelegramChatWindowPromptContext(entry)
-      ? telegramPromptMessages(telegramChatWindowPayload(entry)).flatMap((message) =>
-          typeof message["body"] === "string" && typeof message["sender"] === "string"
-            ? [
-                {
-                  sender: message["sender"],
-                  body: message["body"],
-                  ...(typeof message["message_id"] === "string"
-                    ? { messageId: message["message_id"] }
-                    : {}),
-                  ...(typeof message["timestamp_ms"] === "number"
-                    ? { timestamp: message["timestamp_ms"] }
-                    : {}),
-                },
-              ]
-            : [],
-        )
-      : [],
-  );
-}
-
-export function selectTelegramGroupPromptContext(params: {
-  promptContext: readonly TelegramPromptContextEntry[];
-  historyLimit: number;
-  ambientWatermark?: TelegramAmbientTranscriptWatermark;
-  includeBeforeSelf: boolean;
+export function retainTelegramGroupHistoryPromptContext(params: {
+  promptContext: TelegramPromptContextEntry[];
+  entries: HistoryEntry[];
 }): TelegramPromptContextEntry[] {
+  const entryKeys = new Set(
+    params.entries.flatMap((entry) => {
+      const key = telegramHistoryEntryKey(entry);
+      return key ? [key] : [];
+    }),
+  );
   return params.promptContext.flatMap((entry) => {
     if (!isTelegramChatWindowPromptContext(entry)) {
       return [entry];
     }
     const payload = telegramChatWindowPayload(entry);
-    const sourceMessages = telegramPromptMessages(payload);
-    const recentMessages =
-      params.historyLimit > 0
-        ? sourceMessages
-            .filter((message) =>
-              isTelegramHistoryEntryAfterAmbientWatermark(
-                {
-                  messageId:
-                    typeof message["message_id"] === "string" ? message["message_id"] : undefined,
-                  timestamp:
-                    typeof message["timestamp_ms"] === "number"
-                      ? message["timestamp_ms"]
-                      : undefined,
-                },
-                params.ambientWatermark,
-              ),
-            )
-            .slice(-params.historyLimit)
-        : [];
-    const lastSelfIndex = params.includeBeforeSelf
-      ? -1
-      : recentMessages.findLastIndex(
-          (message) =>
-            typeof message["sender"] === "string" && isTelegramSelfSenderName(message["sender"]),
-        );
-    const selected = new Set(recentMessages.slice(lastSelfIndex + 1));
-    const messages = sourceMessages.filter(
-      (message) => message["is_reply_target"] === true || selected.has(message),
-    );
+    const messages = telegramPromptMessages(payload).filter((message) => {
+      const key = telegramPromptMessageKey(message);
+      return message["is_reply_target"] === true || Boolean(key && entryKeys.has(key));
+    });
     if (messages.length === 0) {
       return [];
     }
-    if (messages.length === sourceMessages.length) {
-      return [entry];
-    }
-    // A clipped projection must not hide a complete transcript message.
-    const {
-      sessionTranscriptDedupeMessageIds: _projectionIds,
-      sessionTranscriptAssistantTextDedupeKeys: _assistantTextKeys,
-      ...selectedEntry
-    } = entry;
-    return [{ ...selectedEntry, payload: { ...payload, messages } }];
+    return [
+      {
+        ...entry,
+        payload: {
+          ...payload,
+          messages,
+        },
+      },
+    ];
   });
+}
+
+export function mergeTelegramGroupHistoryPromptContext(params: {
+  promptContext: TelegramPromptContextEntry[];
+  entries: HistoryEntry[];
+}): TelegramPromptContextEntry[] {
+  if (params.entries.length === 0) {
+    return params.promptContext;
+  }
+  const historyMessages = params.entries.map((entry) => ({
+    ...(entry.messageId ? { message_id: entry.messageId } : {}),
+    sender: entry.sender,
+    ...(entry.timestamp !== undefined ? { timestamp_ms: entry.timestamp } : {}),
+    body: entry.body,
+  }));
+  const chatWindowIndex = params.promptContext.findIndex(isTelegramChatWindowPromptContext);
+  const baseEntry = params.promptContext[chatWindowIndex];
+  const basePayload = telegramChatWindowPayload(baseEntry);
+  const existingMessages = telegramPromptMessages(basePayload);
+  const messagesByKey = new Map<string, Record<string, unknown>>();
+  for (const message of [...historyMessages, ...existingMessages]) {
+    const key = telegramPromptMessageKey(message);
+    if (key) {
+      messagesByKey.set(key, message);
+    }
+  }
+  const mergedMessages = [...messagesByKey.values()].toSorted((left, right) => {
+    const leftTimestamp = typeof left["timestamp_ms"] === "number" ? left["timestamp_ms"] : 0;
+    const rightTimestamp = typeof right["timestamp_ms"] === "number" ? right["timestamp_ms"] : 0;
+    return leftTimestamp - rightTimestamp;
+  });
+  const mergedEntry: TelegramPromptContextEntry = {
+    ...baseEntry,
+    label: "Conversation context",
+    source: baseEntry?.source ?? "telegram",
+    type: "chat_window",
+    payload: {
+      order: "chronological",
+      relation: "selected_for_current_message",
+      messages: mergedMessages,
+    },
+  };
+  if (!baseEntry) {
+    return [...params.promptContext, mergedEntry];
+  }
+  return params.promptContext.map((entry, index) =>
+    index === chatWindowIndex ? mergedEntry : entry,
+  );
+}
+
+export function recordTelegramGroupHistoryEntry(params: {
+  historyMap: Map<string, HistoryEntry[]>;
+  historyKey?: string;
+  limit: number;
+  entry: HistoryEntry;
+  sourceMessageIds?: readonly string[];
+}): void {
+  if (!params.historyKey) {
+    return;
+  }
+  createChannelHistoryWindow({ historyMap: params.historyMap }).record({
+    historyKey: params.historyKey,
+    limit: params.limit,
+    entry: params.entry,
+  });
+  const sourceMessageIds = new Set(
+    params.sourceMessageIds?.map((messageId) => messageId.trim()).filter(Boolean) ?? [],
+  );
+  if (sourceMessageIds.size > 0) {
+    // Album membership is Telegram-local lifecycle metadata. Keep it beside the in-memory
+    // history entry instead of exposing media paths or provider IDs through InboundHistory.
+    telegramSourceMessageIdsByHistoryEntry.set(params.entry, sourceMessageIds);
+  }
+}
+
+export function resolveTelegramGroupHistorySourceMessageIds(params: {
+  bufferedMessages?: readonly { message_id: number }[];
+  media?: readonly { sourceMessageId?: string }[];
+}): string[] {
+  return [
+    ...new Set([
+      ...(params.bufferedMessages ?? []).map((message) => String(message.message_id)),
+      ...(params.media ?? []).flatMap((media) =>
+        media.sourceMessageId ? [media.sourceMessageId] : [],
+      ),
+    ]),
+  ];
+}
+
+export function removeTelegramGroupHistoryEntry(params: {
+  historyMap: Map<string, HistoryEntry[]>;
+  historyKey?: string;
+  messageId: string;
+}): boolean {
+  if (!params.historyKey) {
+    return false;
+  }
+  const entries = params.historyMap.get(params.historyKey);
+  if (!entries) {
+    return false;
+  }
+  const retained = entries.filter(
+    (entry) =>
+      entry.messageId !== params.messageId &&
+      !telegramSourceMessageIdsByHistoryEntry.get(entry)?.has(params.messageId),
+  );
+  if (retained.length === entries.length) {
+    return false;
+  }
+  if (retained.length === 0) {
+    params.historyMap.delete(params.historyKey);
+  } else {
+    params.historyMap.set(params.historyKey, retained);
+  }
+  return true;
 }

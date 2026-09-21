@@ -91,6 +91,9 @@ function buildRecoveredTelegramChatActionSender(params: {
   action: "typing" | "record_voice";
 }): () => Promise<void> {
   return async () => {
+    if (params.context.isInitialFeedbackStarted?.() === false) {
+      return;
+    }
     try {
       await withTelegramApiErrorLogging({
         operation: "sendChatAction",

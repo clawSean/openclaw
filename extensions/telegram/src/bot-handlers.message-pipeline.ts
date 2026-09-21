@@ -102,6 +102,7 @@ export function createTelegramMessagePipeline({
   processMessage,
   logger,
   telegramDeps,
+  pluginNativeCommandNames,
 }: RegisterTelegramHandlerParams) {
   const { token } = opts;
   const mediaRuntimeOptions = resolveTelegramMediaRuntimeOptions({
@@ -132,6 +133,8 @@ export function createTelegramMessagePipeline({
   const { resolveTelegramSessionState, resolvePromptContextAmbientWatermark } = sessionRuntime;
   const {
     recordMessageForReplyChain,
+    removeMessageFromReplyChain,
+    isMessageIgnoredForReplyChain,
     recordMessageResolvedMedia,
     recordReplyMessageResolvedMedia,
     resolveCachedMessageThreadSpec,
@@ -145,6 +148,7 @@ export function createTelegramMessagePipeline({
     opts,
     telegramCfg,
     telegramDeps,
+    pluginNativeCommandNames,
   });
   const replayGuard = createTelegramMessageDispatchReplayGuard({
     onDiskError: (error) => {
@@ -339,6 +343,13 @@ export function createTelegramMessagePipeline({
     dispatchDedupeClaims?: TelegramMessageDispatchReplayClaim[];
     spooledReplayParticipants?: readonly TelegramSpooledReplayDeferredParticipant[];
     spooledReplayAbortSignal?: AbortSignal;
+    shouldSkipBeforeDispatch?: () => boolean | Promise<boolean>;
+    deferCancelledBeforeDispatchSettlement?: boolean;
+    dispatchAdmission?: {
+      abortSignal: AbortSignal;
+      tryAdmit: () => boolean;
+      onAdmitted?: () => Promise<void> | void;
+    };
   }): Promise<TelegramMessageProcessingResult> => {
     let dispatchDedupeCommitted = false;
     let spooledReplayFinalResult: TelegramMessageProcessingResult | undefined;
@@ -531,6 +542,13 @@ export function createTelegramMessagePipeline({
         promptContextMediaByMessageId,
         params.promptContextMessageSelection,
       );
+      // Buffered owners can be cancelled while context/media hydration awaits.
+      // Revalidate at the last boundary before the agent dispatch becomes observable.
+      if (await params.shouldSkipBeforeDispatch?.()) {
+        return params.deferCancelledBeforeDispatchSettlement
+          ? { kind: "skipped", reason: "cancelled-before-dispatch" }
+          : { kind: "skipped" };
+      }
       const result = await processMessage({
         ctx: params.ctx,
         allMedia: params.allMedia,
@@ -538,6 +556,9 @@ export function createTelegramMessagePipeline({
         turnContext: {
           cfg: runtimeCfg,
           telegramCfg: runtimeTelegramCfg,
+          shouldSkipBeforeDispatch: params.shouldSkipBeforeDispatch,
+          deferCancelledBeforeDispatchSettlement: params.deferCancelledBeforeDispatchSettlement,
+          dispatchAdmission: params.dispatchAdmission,
           onDispatchStart: async () => {
             await commitDispatchDedupeClaims(params.dispatchDedupeClaims ?? []);
             dispatchDedupeCommitted = true;
@@ -556,6 +577,13 @@ export function createTelegramMessagePipeline({
         replyChain,
         promptContext,
       });
+      if (
+        result.kind === "skipped" &&
+        result.reason === "cancelled-before-dispatch" &&
+        params.deferCancelledBeforeDispatchSettlement
+      ) {
+        return result;
+      }
       if (spooledReplay) {
         return await finalizeSpooledReplayResult(result);
       }
@@ -595,6 +623,8 @@ export function createTelegramMessagePipeline({
     resolveTelegramSessionState,
     resolvePromptContextAmbientWatermark,
     recordMessageForReplyChain,
+    removeMessageFromReplyChain,
+    isMessageIgnoredForReplyChain,
     recordMessageResolvedMedia,
     resolveCachedMessageThreadSpec,
     processMessageWithReplyChain,

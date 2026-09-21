@@ -91,6 +91,7 @@ function registerHandler(
     resolveGroupPolicy: () => ({ allowlistEnabled: false, allowed: true }),
     resolveGroupActivation: () => undefined,
     resolveGroupRequireMention: () => false,
+    removeMessageFromGroupHistory: vi.fn(),
     resolveTelegramGroupConfig: (
       chatId: string | number,
       messageThreadId: number | undefined,
