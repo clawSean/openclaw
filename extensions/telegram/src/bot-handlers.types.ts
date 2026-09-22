@@ -1,5 +1,4 @@
 import type { Bot, Context } from "grammy";
-import type { Message } from "grammy/types";
 import type {
   ChannelGroupPolicy,
   OpenClawConfig,
@@ -109,7 +108,6 @@ export type RegisterTelegramHandlerParams = {
     cfg: OpenClawConfig,
   ) => TelegramResolvedGroupConfig;
   shouldSkipUpdate: (ctx: TelegramUpdateKeyContext) => boolean;
-  removeMessageFromGroupHistory: (msg: Message, threadSpec: TelegramThreadSpec) => boolean;
   processMessage: ProcessTelegramMessage;
   logger: TelegramHandlerLogger;
   nativeCommandCallbackDispatcher?: TelegramNativeCommandCallbackDispatcher;

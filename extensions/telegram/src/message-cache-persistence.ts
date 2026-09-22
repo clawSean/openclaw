@@ -69,10 +69,6 @@ export type PersistedTelegramMessagePrivacyEntry =
   | PersistedTelegramIgnoredMediaGroup
   | PersistedTelegramIgnoredMessage;
 
-export type PersistedTelegramMessageCacheEntry =
-  | PersistedTelegramMessageCacheValue
-  | PersistedTelegramIgnoredMediaGroup;
-
 export function parsePersistedTelegramIgnoredMediaGroup(
   value: unknown,
 ): PersistedTelegramIgnoredMediaGroup | undefined {

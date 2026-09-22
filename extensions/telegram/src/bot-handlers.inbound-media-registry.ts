@@ -1,17 +1,14 @@
 import type { BufferedMediaGroupEntry } from "./bot-handlers.inbound-media.types.js";
 import type { TelegramMessagePipeline } from "./bot-handlers.message-pipeline.js";
-import type { RegisterTelegramHandlerParams } from "./bot-handlers.types.js";
 
 type TelegramMediaGroupRegistryDependencies = Pick<
   TelegramMessagePipeline,
   "releaseDispatchDedupeClaims" | "removeMessageFromReplyChain" | "settleSpooledReplayParticipants"
-> &
-  Pick<RegisterTelegramHandlerParams, "removeMessageFromGroupHistory">;
+>;
 
 export function createTelegramMediaGroupRegistry({
   timeoutMs,
   releaseDispatchDedupeClaims,
-  removeMessageFromGroupHistory,
   removeMessageFromReplyChain,
   settleSpooledReplayParticipants,
 }: TelegramMediaGroupRegistryDependencies & { timeoutMs: number }) {
@@ -65,11 +62,6 @@ export function createTelegramMediaGroupRegistry({
   const purgeEntry = async (entry: BufferedMediaGroupEntry) => {
     const errors: unknown[] = [];
     for (const { msg } of entry.messages) {
-      try {
-        removeMessageFromGroupHistory(msg, entry.threadSpec);
-      } catch (error) {
-        errors.push(error);
-      }
       try {
         await removeMessageFromReplyChain(msg);
       } catch (error) {

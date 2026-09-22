@@ -94,7 +94,6 @@ describe("createTelegramInboundMedia", () => {
       },
     );
     const removeMessageFromReplyChain = vi.fn(async () => true);
-    const removeMessageFromGroupHistory = vi.fn(() => true);
     const message = {
       resolveMediaRuntime: (...signals: AbortSignal[]) => ({ abortSignal: signals[0] }),
       recordMessageResolvedMedia: vi.fn(async () => undefined),
@@ -124,7 +123,6 @@ describe("createTelegramInboundMedia", () => {
         runtime: {},
         mediaMaxBytes: 10_000_000,
         logger: { info: vi.fn(), warn: vi.fn() },
-        removeMessageFromGroupHistory,
         resolveGroupActivation: () => undefined,
         resolveGroupRequireMention: () => false,
       } as unknown as Pick<
@@ -135,7 +133,6 @@ describe("createTelegramInboundMedia", () => {
         | "runtime"
         | "mediaMaxBytes"
         | "logger"
-        | "removeMessageFromGroupHistory"
         | "resolveGroupActivation"
         | "resolveGroupRequireMention"
       >,
@@ -174,7 +171,6 @@ describe("createTelegramInboundMedia", () => {
     await expect(settling).resolves.toBe(true);
     expect(processMessageWithReplyChain).toHaveBeenCalledOnce();
     expect(removeMessageFromReplyChain).toHaveBeenCalledTimes(4);
-    expect(removeMessageFromGroupHistory).toHaveBeenCalledTimes(4);
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
@@ -195,7 +191,6 @@ describe("createTelegramInboundMedia", () => {
         contentType: "image/jpeg",
       });
       const removeMessageFromReplyChain = vi.fn(async () => true);
-      const removeMessageFromGroupHistory = vi.fn(() => true);
       let admitted = 0;
       let ignoreSettlement: Promise<boolean> | undefined;
       const inboundMediaControl: {
@@ -256,7 +251,6 @@ describe("createTelegramInboundMedia", () => {
           runtime: {},
           mediaMaxBytes: 10_000_000,
           logger: { info: vi.fn(), warn: vi.fn() },
-          removeMessageFromGroupHistory,
           resolveGroupActivation: () => undefined,
           resolveGroupRequireMention: () => false,
         } as unknown as Pick<
@@ -267,7 +261,6 @@ describe("createTelegramInboundMedia", () => {
           | "runtime"
           | "mediaMaxBytes"
           | "logger"
-          | "removeMessageFromGroupHistory"
           | "resolveGroupActivation"
           | "resolveGroupRequireMention"
         >,
@@ -285,10 +278,8 @@ describe("createTelegramInboundMedia", () => {
       expect(admitted).toBe(expectedAdmissions);
       if (authorized) {
         expect(removeMessageFromReplyChain).toHaveBeenCalled();
-        expect(removeMessageFromGroupHistory).toHaveBeenCalled();
       } else {
         expect(removeMessageFromReplyChain).not.toHaveBeenCalled();
-        expect(removeMessageFromGroupHistory).not.toHaveBeenCalled();
       }
     },
   );
@@ -306,7 +297,6 @@ describe("createTelegramInboundMedia", () => {
       contentType: "image/jpeg",
     });
     const removeMessageFromReplyChain = vi.fn(async () => true);
-    const removeMessageFromGroupHistory = vi.fn(() => true);
     const processMessageWithReplyChain = vi.fn(
       async (input: Parameters<TelegramMessagePipeline["processMessageWithReplyChain"]>[0]) => {
         expect(input.dispatchAdmission?.tryAdmit()).toBe(true);
@@ -342,7 +332,6 @@ describe("createTelegramInboundMedia", () => {
         runtime: {},
         mediaMaxBytes: 10_000_000,
         logger: { info: vi.fn(), warn: vi.fn() },
-        removeMessageFromGroupHistory,
         resolveGroupActivation: () => undefined,
         resolveGroupRequireMention: () => false,
       } as unknown as Pick<
@@ -353,7 +342,6 @@ describe("createTelegramInboundMedia", () => {
         | "runtime"
         | "mediaMaxBytes"
         | "logger"
-        | "removeMessageFromGroupHistory"
         | "resolveGroupActivation"
         | "resolveGroupRequireMention"
       >,
@@ -377,7 +365,6 @@ describe("createTelegramInboundMedia", () => {
     expect(removeMessageFromReplyChain).toHaveBeenCalledWith(albumMessage);
 
     removeMessageFromReplyChain.mockClear();
-    removeMessageFromGroupHistory.mockClear();
     const repeatedIgnore = inboundMedia.beginPendingMediaGroupIgnore({
       ...albumMessage,
       caption: "/ignore hidden again",
@@ -385,6 +372,5 @@ describe("createTelegramInboundMedia", () => {
     });
     await expect(repeatedIgnore?.settle(true)).resolves.toBe(false);
     expect(removeMessageFromReplyChain).not.toHaveBeenCalled();
-    expect(removeMessageFromGroupHistory).not.toHaveBeenCalled();
   });
 });

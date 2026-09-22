@@ -2,6 +2,7 @@ import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { expect, it, vi } from "vitest";
 import {
   createTelegramBot,
+  createPluginRuntimeMock,
   dispatchReplyWithBufferedBlockDispatcher,
   getOnHandler,
   loadConfig,
@@ -15,7 +16,6 @@ import {
   sendMessageSpy,
   setTelegramRuntime,
   TELEGRAM_TEST_TIMINGS,
-  waitForTelegramMockCalls,
 } from "./bot.create-telegram-bot.ignore.test-support.js";
 import type { TelegramRuntime } from "./runtime.types.js";
 
@@ -139,6 +139,7 @@ export function registerTelegramIgnoreEditTests(): void {
   it("removes an edited /ignore message from the live group history", async () => {
     loadConfig.mockReturnValue({
       commands: { native: true },
+      messages: { inbound: { debounceMs: 0 } },
       channels: {
         telegram: {
           groupPolicy: "open",
@@ -203,9 +204,10 @@ export function registerTelegramIgnoreEditTests(): void {
     const openKeyedStore: TelegramRuntime["state"]["openKeyedStore"] = <T>(
       options: Parameters<TelegramRuntime["state"]["openKeyedStore"]>[0],
     ) => pluginStateTestRuntime.createPluginStateKeyedStoreForTests<T>("telegram", options);
-    setTelegramRuntime({ state: { openKeyedStore }, channel: {} } as TelegramRuntime);
+    setTelegramRuntime(createPluginRuntimeMock({ state: { openKeyedStore } }) as TelegramRuntime);
     loadConfig.mockReturnValue({
       commands: { native: true },
+      messages: { inbound: { debounceMs: 0 } },
       channels: {
         telegram: {
           groupPolicy: "open",
@@ -255,8 +257,10 @@ export function registerTelegramIgnoreEditTests(): void {
           throw new Error("secondary media unavailable");
         },
       });
-      await waitForTelegramMockCalls(dispatchReplyWithBufferedBlockDispatcher, 1);
-      expect(dispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(1);
+      await vi.waitFor(
+        () => expect(dispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(1),
+        { timeout: 5_000 },
+      );
       const albumBody = requireValue(replySpy.mock.calls.at(0), "replySpy call")[0].Body;
       expect(albumBody).toContain("primary private detail");
       expect(albumBody).toContain("secondary private detail");
@@ -344,9 +348,10 @@ export function registerTelegramIgnoreEditTests(): void {
     const openKeyedStore: TelegramRuntime["state"]["openKeyedStore"] = <T>(
       options: Parameters<TelegramRuntime["state"]["openKeyedStore"]>[0],
     ) => pluginStateTestRuntime.createPluginStateKeyedStoreForTests<T>("telegram", options);
-    setTelegramRuntime({ state: { openKeyedStore }, channel: {} } as TelegramRuntime);
+    setTelegramRuntime(createPluginRuntimeMock({ state: { openKeyedStore } }) as TelegramRuntime);
     loadConfig.mockReturnValue({
       commands: { native: true },
+      messages: { inbound: { debounceMs: 0 } },
       channels: {
         telegram: {
           groupPolicy: "open",

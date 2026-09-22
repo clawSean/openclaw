@@ -2,6 +2,10 @@ import type { Message } from "grammy/types";
 import { describe, expect, it } from "vitest";
 import "./message-cache.privacy.test-support.js";
 import {
+  hasProviderObservedTelegramThreadBinding,
+  resolveProviderObservedTelegramThreadSpec,
+} from "./message-cache-codec.js";
+import {
   resolveTelegramMessageCachePersistentScopeKey,
   TELEGRAM_MESSAGE_CACHE_PERSISTENT_MAX_MESSAGES,
   type PersistedTelegramMessageCacheValue,
@@ -10,8 +14,6 @@ import {
   buildTelegramConversationContext,
   buildTelegramReplyChain,
   createTelegramMessageCache,
-  hasProviderObservedTelegramThreadBinding,
-  resolveProviderObservedTelegramThreadSpec,
 } from "./message-cache.js";
 import { resetTelegramMessageCacheForTest as resetCache } from "./runtime.test-support.js";
 
@@ -235,7 +237,7 @@ describe("telegram message cache", () => {
     expect(reloadedSource?.quote).toBeUndefined();
   });
 
-  it("keeps a same-number external reply target from another chat", async () => {
+  it("keeps a cross-chat external payload without borrowing a local reply identity", async () => {
     const { bucketKey, store } = createMemoryStore();
     const localChat = { id: -1001, type: "supergroup", title: "Local" };
     const externalChat = { id: -1002, type: "supergroup", title: "External" };
@@ -260,7 +262,7 @@ describe("telegram message cache", () => {
     resetCache();
     const reloadedReply = await get(cacheFor(bucketKey, store), "9006", { chatId: -1001 });
 
-    expect(reloadedReply?.replyToId).toBe("9005");
+    expect(reloadedReply?.replyToId).toBeUndefined();
     const reloadedSource = reloadedReply?.sourceMessage as
       | (Message & { external_reply?: Message })
       | undefined;

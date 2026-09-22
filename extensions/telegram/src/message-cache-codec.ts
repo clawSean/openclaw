@@ -63,11 +63,22 @@ export function isGroupMessage(msg: Message): boolean {
 }
 
 export function resolveReplyMessage(msg: Message) {
+  return msg.reply_to_message ?? msg.external_reply;
+}
+
+function resolveCachedReplyMessage(msg: Message) {
   if (msg.reply_to_message) {
     return msg.reply_to_message;
   }
   const externalReply = msg.external_reply;
-  return externalReply?.chat && externalReply.chat.id === msg.chat?.id ? externalReply : undefined;
+  if (
+    externalReply?.chat?.id == null ||
+    msg.chat?.id == null ||
+    String(externalReply.chat.id) !== String(msg.chat.id)
+  ) {
+    return undefined;
+  }
+  return externalReply;
 }
 
 export function isTelegramMessageFromCurrentBot(msg: Message, botUserId?: number): boolean {
@@ -112,7 +123,7 @@ export function normalizeMessageNode(
   const media = resolveTelegramPrimaryMedia(msg);
   const fileId = media?.fileRef.file_id;
   const forwardedFrom = normalizeForwardedContext(msg);
-  const replyMessage = resolveReplyMessage(msg);
+  const replyMessage = resolveCachedReplyMessage(msg);
   const body = resolveMessageBody(msg, params.promptContextProjectionMarker !== undefined);
   const threadBinding = normalizeTelegramMessageThreadBinding(params.threadBinding);
   const threadId =

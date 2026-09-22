@@ -26,6 +26,7 @@ type BuildTelegramMessageContextForTestParams = {
   message: Record<string, unknown>;
   me?: Record<string, unknown>;
   allMedia?: TelegramMediaRef[];
+  replyMedia?: TelegramMediaRef[];
   replyChain?: BuildTelegramMessageContextParams["replyChain"];
   promptContext?: BuildTelegramMessageContextParams["promptContext"];
   options?: BuildTelegramMessageContextParams["options"];
@@ -34,7 +35,6 @@ type BuildTelegramMessageContextForTestParams = {
   accountId?: string;
   dmPolicy?: BuildTelegramMessageContextParams["dmPolicy"];
   historyLimit?: number;
-  groupHistories?: BuildTelegramMessageContextParams["groupHistories"];
   dmHistoryLimit?: number;
   ackReactionScope?: BuildTelegramMessageContextParams["ackReactionScope"];
   botApi?: Record<string, unknown>;
@@ -132,6 +132,7 @@ export async function buildTelegramMessageContextForTest(
       me: { id: 7, username: "bot", ...params.me },
     } as never,
     allMedia: params.allMedia ?? [],
+    replyMedia: params.replyMedia ?? [],
     replyChain: params.replyChain ?? [],
     promptContext: params.promptContext ?? [],
     storeAllowFrom: [],
@@ -152,7 +153,6 @@ export async function buildTelegramMessageContextForTest(
     sessionRuntime,
     account: { accountId: params.accountId ?? "default" } as never,
     historyLimit: params.historyLimit ?? 0,
-    groupHistories: params.groupHistories ?? new Map(),
     dmHistoryLimit: params.dmHistoryLimit ?? 10,
     dmPolicy: params.dmPolicy ?? "open",
     allowFrom: ["*"],

@@ -114,7 +114,13 @@ export function expectResolvedMediaFields(
 
 export async function expectMediaFetchError(
   promise: Promise<unknown>,
-  fields: { code: string; messageIncludes: string; name?: string; status?: number },
+  fields: {
+    code: string;
+    messageIncludes: string;
+    name?: string;
+    status?: number;
+    cause?: unknown;
+  },
 ) {
   try {
     await promise;
@@ -125,6 +131,9 @@ export async function expectMediaFetchError(
     expect(String(record.message)).toContain(fields.messageIncludes);
     if (fields.status !== undefined) {
       expect(record.status).toBe(fields.status);
+    }
+    if (fields.cause !== undefined) {
+      expect(record.cause).toBe(fields.cause);
     }
     return;
   }

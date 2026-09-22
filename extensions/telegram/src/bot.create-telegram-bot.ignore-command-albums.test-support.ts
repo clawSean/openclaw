@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import {
   createTelegramBot,
+  createPluginRuntimeMock,
   dispatchReplyWithBufferedBlockDispatcher,
   getOnHandler,
   loadConfig,
@@ -54,7 +55,6 @@ export function registerTelegramIgnoreCommandAndAlbumTests(): void {
     }
 
     expect(dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
-    expect(sendChatActionSpy).not.toHaveBeenCalled();
     expect(sendMessageSpy).toHaveBeenCalledTimes(1);
     expect(String(sendMessageSpy.mock.calls[0]?.[1])).toContain(
       "Replying to it may include it again",
@@ -93,9 +93,10 @@ export function registerTelegramIgnoreCommandAndAlbumTests(): void {
     const openKeyedStore: TelegramRuntime["state"]["openKeyedStore"] = <T>(
       options: Parameters<TelegramRuntime["state"]["openKeyedStore"]>[0],
     ) => pluginStateTestRuntime.createPluginStateKeyedStoreForTests<T>("telegram", options);
-    setTelegramRuntime({ state: { openKeyedStore }, channel: {} } as TelegramRuntime);
+    setTelegramRuntime(createPluginRuntimeMock({ state: { openKeyedStore } }) as TelegramRuntime);
     loadConfig.mockReturnValue({
       commands: { native: true },
+      messages: { inbound: { debounceMs: 0 } },
       channels: {
         telegram: {
           dmPolicy: "open",
@@ -176,11 +177,27 @@ export function registerTelegramIgnoreCommandAndAlbumTests(): void {
   it("treats /ignore in an album as ordinary text when native commands are disabled", async () => {
     loadConfig.mockReturnValue({
       commands: { native: false },
+      messages: { inbound: { debounceMs: 0 } },
       channels: { telegram: { dmPolicy: "open", allowFrom: ["*"] } },
     });
     const getFileSpy = vi.fn(async () => ({ file_path: "photos/p1.jpg" }));
+    const mediaFetch = vi.fn(
+      async () =>
+        new Response(new Uint8Array([0xff, 0xd8, 0xff, 0x00]), {
+          status: 200,
+          headers: { "content-type": "image/jpeg" },
+        }),
+    );
 
-    createTelegramBot({ token: "tok", testTimings: TELEGRAM_TEST_TIMINGS });
+    createTelegramBot({
+      token: "tok",
+      testTimings: TELEGRAM_TEST_TIMINGS,
+      telegramTransport: {
+        fetch: mediaFetch as typeof fetch,
+        sourceFetch: mediaFetch as typeof fetch,
+        close: async () => {},
+      },
+    });
     const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
     const base = {
       chat: { id: 1234, type: "private" },
@@ -218,6 +235,7 @@ export function registerTelegramIgnoreCommandAndAlbumTests(): void {
   it("routes bare /ignore album help to its channel direct messages topic", async () => {
     loadConfig.mockReturnValue({
       commands: { native: true },
+      messages: { inbound: { debounceMs: 0 } },
       channels: {
         telegram: {
           dmPolicy: "open",

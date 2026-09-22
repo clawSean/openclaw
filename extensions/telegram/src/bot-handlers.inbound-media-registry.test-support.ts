@@ -14,15 +14,7 @@ describe("createTelegramMediaGroupRegistry", () => {
         }) as Message,
     );
     const attempts: string[] = [];
-    const groupHistoryError = new Error("group history unavailable");
     const replyCacheError = new Error("reply cache unavailable");
-    const removeMessageFromGroupHistory = vi.fn((msg: Message) => {
-      attempts.push(`group:${msg.message_id}`);
-      if (msg.message_id === 1) {
-        throw groupHistoryError;
-      }
-      return true;
-    });
     const removeMessageFromReplyChain = vi.fn(async (msg: Message) => {
       attempts.push(`reply:${msg.message_id}`);
       if (msg.message_id === 1) {
@@ -33,7 +25,6 @@ describe("createTelegramMediaGroupRegistry", () => {
     const registry = createTelegramMediaGroupRegistry({
       timeoutMs: 10,
       releaseDispatchDedupeClaims: vi.fn(),
-      removeMessageFromGroupHistory,
       removeMessageFromReplyChain,
       settleSpooledReplayParticipants: vi.fn(),
     });
@@ -48,8 +39,7 @@ describe("createTelegramMediaGroupRegistry", () => {
         (error: unknown) => error,
       );
 
-    expect(failure).toBeInstanceOf(AggregateError);
-    expect((failure as AggregateError).errors).toEqual([groupHistoryError, replyCacheError]);
-    expect(attempts).toEqual(["group:1", "reply:1", "group:2", "reply:2"]);
+    expect(failure).toBe(replyCacheError);
+    expect(attempts).toEqual(["reply:1", "reply:2"]);
   });
 });

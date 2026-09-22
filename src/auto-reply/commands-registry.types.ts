@@ -88,6 +88,15 @@ export type ChatCommandDefinition = {
   modelIndependent?: "always" | "no-args" | "directive" | ((args: string) => boolean);
 };
 
+export type BuiltinCommandOptions = Omit<
+  ChatCommandDefinition,
+  "key" | "description" | "category" | "tier" | "nativeName" | "textAliases" | "scope"
+> & {
+  nativeName?: string | false;
+  scope?: ChatCommandDefinition["scope"];
+  textAliases?: string[];
+};
+
 /** Provider-facing native command registration shape. */
 export type NativeCommandSpec = {
   name: string;

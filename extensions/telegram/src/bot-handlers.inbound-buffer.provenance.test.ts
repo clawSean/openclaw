@@ -83,7 +83,6 @@ describe("Telegram inbound provenance buffering", () => {
           bot: { api: { sendMessage: vi.fn() } } as never,
           runtime: { error: vi.fn(), exit: vi.fn(), log: vi.fn() },
           opts: { token: "test-token" },
-          removeMessageFromGroupHistory: vi.fn(),
         },
         message,
       });
@@ -155,10 +154,6 @@ describe("Telegram inbound provenance buffering", () => {
       begin?: ReturnType<typeof createTelegramInboundBuffers>["beginPendingBufferedMessageIgnore"];
     } = {};
     const privacyOrder: string[] = [];
-    const removeMessageFromGroupHistory = vi.fn(() => {
-      privacyOrder.push("group-history-purged");
-      return true;
-    });
     const removeMessageFromReplyChain = vi.fn(async () => {
       privacyOrder.push("reply-cache-purged");
       return true;
@@ -184,11 +179,11 @@ describe("Telegram inbound provenance buffering", () => {
     const { inboundDebouncer, beginPendingBufferedMessageIgnore: beginPending } =
       createTelegramInboundBuffers({
         params: {
+          accountId: "default",
           cfg: { messages: { inbound: { debounceMs: 10 } } },
           bot: { api: { sendMessage: vi.fn() } } as never,
           runtime: { error: vi.fn(), exit: vi.fn(), log: vi.fn() },
           opts: { token: "test-token" },
-          removeMessageFromGroupHistory,
         },
         message: createPipeline(processMessageWithReplyChain, removeMessageFromReplyChain),
       });
@@ -225,14 +220,7 @@ describe("Telegram inbound provenance buffering", () => {
       message_id: 2,
       text: "message 2",
     });
-    expect(privacyOrder).toEqual([
-      "late-context-write",
-      "group-history-purged",
-      "reply-cache-purged",
-    ]);
-    expect(removeMessageFromGroupHistory).toHaveBeenCalledExactlyOnceWith(firstMessage, {
-      scope: "none",
-    });
+    expect(privacyOrder).toEqual(["late-context-write", "reply-cache-purged"]);
     expect(removeMessageFromReplyChain).toHaveBeenCalledExactlyOnceWith(firstMessage);
   });
 
@@ -250,11 +238,11 @@ describe("Telegram inbound provenance buffering", () => {
       .mockResolvedValue({ kind: "completed" });
     const { inboundDebouncer } = createTelegramInboundBuffers({
       params: {
+        accountId: "default",
         cfg: { messages: { inbound: { debounceMs: 10 } } },
         bot: { api: { sendMessage: vi.fn() } } as never,
         runtime: { error: vi.fn(), exit: vi.fn(), log: vi.fn() },
         opts: { token: "test-token" },
-        removeMessageFromGroupHistory: vi.fn(),
       },
       message: createPipeline(processMessageWithReplyChain),
     });
@@ -306,15 +294,14 @@ describe("Telegram inbound provenance buffering", () => {
       return { kind: "completed" };
     });
     const removeMessageFromReplyChain = vi.fn(async () => true);
-    const removeMessageFromGroupHistory = vi.fn();
     const { inboundDebouncer, beginPendingBufferedMessageIgnore: beginPending } =
       createTelegramInboundBuffers({
         params: {
+          accountId: "default",
           cfg: { messages: { inbound: { debounceMs: 10 } } },
           bot: { api: { sendMessage: vi.fn() } } as never,
           runtime: { error: vi.fn(), exit: vi.fn(), log: vi.fn() },
           opts: { token: "test-token" },
-          removeMessageFromGroupHistory,
         },
         message: createPipeline(processMessageWithReplyChain, removeMessageFromReplyChain),
       });
@@ -339,7 +326,6 @@ describe("Telegram inbound provenance buffering", () => {
     await inboundDebouncer.drain();
 
     expect(processMessageWithReplyChain).toHaveBeenCalledTimes(2);
-    expect(removeMessageFromGroupHistory).not.toHaveBeenCalled();
     expect(removeMessageFromReplyChain).not.toHaveBeenCalled();
   });
 
@@ -356,10 +342,6 @@ describe("Telegram inbound provenance buffering", () => {
       begin?: ReturnType<typeof createTelegramInboundBuffers>["beginPendingBufferedMessageIgnore"];
     } = {};
     const privacyOrder: string[] = [];
-    const removeMessageFromGroupHistory = vi.fn(() => {
-      privacyOrder.push("group-history-purged");
-      return true;
-    });
     const removeMessageFromReplyChain = vi.fn(async () => {
       privacyOrder.push("reply-cache-purged");
       return true;
@@ -380,43 +362,37 @@ describe("Telegram inbound provenance buffering", () => {
       expect(await input.shouldSkipBeforeDispatch?.()).toBe(false);
       return { kind: "completed" };
     });
-    const { handleTextFragment, beginPendingBufferedMessageIgnore: beginPending } =
+    const { inboundDebouncer, beginPendingBufferedMessageIgnore: beginPending } =
       createTelegramInboundBuffers({
         params: {
+          accountId: "default",
           cfg: {},
           bot: { api: { sendMessage: vi.fn() } } as never,
           runtime: { error: vi.fn(), exit: vi.fn(), log: vi.fn() },
           opts: { token: "test-token", testTimings: { textFragmentGapMs: 10 } },
-          removeMessageFromGroupHistory,
         },
         message: createPipeline(processMessageWithReplyChain, removeMessageFromReplyChain),
       });
     ignoreControl.begin = beginPending;
-    const baseInput = {
-      chatId: 42,
-      threadSpec: { scope: "none" } as const,
-      storeAllowFrom: [],
-      isAbortControlMessage: false,
-      isAuthorizedAbortControlMessage: async () => true,
-      dispatchDedupeClaims: [],
-      channelIngressResolver: async () => ({ allowed: true }) as never,
-    };
-
-    expect(
-      await handleTextFragment({
-        ...baseInput,
-        ctx: { message: firstMessage } as TelegramContext,
-        msg: firstMessage,
-      }),
-    ).toBe(true);
-    expect(
-      await handleTextFragment({
-        ...baseInput,
-        ctx: { message: secondMessage } as TelegramContext,
-        msg: secondMessage,
-      }),
-    ).toBe(true);
-    await vi.waitFor(() => expect(processMessageWithReplyChain).toHaveBeenCalledTimes(2));
+    for (const msg of [firstMessage, secondMessage]) {
+      await inboundDebouncer.enqueue({
+        ctx: { message: msg } as TelegramContext,
+        msg,
+        allMedia: [],
+        storeAllowFrom: [],
+        receivedAtMs: msg.message_id,
+        debounceKey: "telegram:default:42:42:default",
+        debounceLane: "default",
+        threadSpec: { scope: "none" },
+        dispatchDedupeClaims: [],
+        channelIngressResolvers: [async () => ({ allowed: true }) as never],
+        cancelled: false,
+        dispatchAdmission: "pending",
+        dispatchAbortControllers: new Set(),
+        pendingIgnoreSettlements: new Set(),
+      });
+    }
+    await inboundDebouncer.drain();
 
     expect(
       processMessageWithReplyChain.mock.calls[0]?.[0].options?.bufferedMessages?.map(
@@ -425,16 +401,9 @@ describe("Telegram inbound provenance buffering", () => {
     ).toEqual([10, 11]);
     expect(processMessageWithReplyChain.mock.calls[1]?.[0]).toMatchObject({
       msg: { message_id: 11, text: "survivor" },
-      options: { bufferedMessages: [{ message_id: 11, text: "survivor" }] },
+      options: { ingressBuffer: "inbound-debounce" },
     });
-    expect(privacyOrder).toEqual([
-      "late-context-write",
-      "group-history-purged",
-      "reply-cache-purged",
-    ]);
-    expect(removeMessageFromGroupHistory).toHaveBeenCalledExactlyOnceWith(firstMessage, {
-      scope: "none",
-    });
+    expect(privacyOrder).toEqual(["late-context-write", "reply-cache-purged"]);
     expect(removeMessageFromReplyChain).toHaveBeenCalledExactlyOnceWith(firstMessage);
   });
 
@@ -450,34 +419,34 @@ describe("Telegram inbound provenance buffering", () => {
       .fn<TelegramMessagePipeline["processMessageWithReplyChain"]>()
       .mockResolvedValueOnce({ kind: "skipped", reason: "cancelled-before-dispatch" })
       .mockResolvedValue({ kind: "completed" });
-    const { handleTextFragment } = createTelegramInboundBuffers({
+    const { inboundDebouncer } = createTelegramInboundBuffers({
       params: {
+        accountId: "default",
         cfg: {},
         bot: { api: { sendMessage: vi.fn() } } as never,
         runtime: { error: vi.fn(), exit: vi.fn(), log: vi.fn() },
         opts: { token: "test-token", testTimings: { textFragmentGapMs: 10 } },
-        removeMessageFromGroupHistory: vi.fn(),
       },
       message: createPipeline(processMessageWithReplyChain),
     });
 
-    expect(
-      await handleTextFragment({
-        chatId: 42,
-        ctx: { message: msg } as TelegramContext,
-        msg,
-        threadSpec: { scope: "none" },
-        storeAllowFrom: [],
-        isAbortControlMessage: false,
-        isAuthorizedAbortControlMessage: async () => true,
-        dispatchDedupeClaims: [],
-        channelIngressResolver: async () => ({ allowed: true }) as never,
-      }),
-    ).toBe(true);
-    await vi.waitFor(() => expect(processMessageWithReplyChain).toHaveBeenCalled());
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 30);
+    await inboundDebouncer.enqueue({
+      ctx: { message: msg } as TelegramContext,
+      msg,
+      allMedia: [],
+      storeAllowFrom: [],
+      receivedAtMs: 1,
+      debounceKey: "telegram:default:42:42:default",
+      debounceLane: "default",
+      threadSpec: { scope: "none" },
+      dispatchDedupeClaims: [],
+      channelIngressResolvers: [async () => ({ allowed: true }) as never],
+      cancelled: false,
+      dispatchAdmission: "pending",
+      dispatchAbortControllers: new Set(),
+      pendingIgnoreSettlements: new Set(),
     });
+    await inboundDebouncer.drain();
 
     expect(processMessageWithReplyChain).toHaveBeenCalledTimes(1);
   });
@@ -508,36 +477,37 @@ describe("Telegram inbound provenance buffering", () => {
       return { kind: "completed" };
     });
     const removeMessageFromReplyChain = vi.fn(async () => true);
-    const removeMessageFromGroupHistory = vi.fn();
-    const { handleTextFragment, beginPendingBufferedMessageIgnore: beginPending } =
+    const { inboundDebouncer, beginPendingBufferedMessageIgnore: beginPending } =
       createTelegramInboundBuffers({
         params: {
+          accountId: "default",
           cfg: {},
           bot: { api: { sendMessage: vi.fn() } } as never,
           runtime: { error: vi.fn(), exit: vi.fn(), log: vi.fn() },
           opts: { token: "test-token", testTimings: { textFragmentGapMs: 10 } },
-          removeMessageFromGroupHistory,
         },
         message: createPipeline(processMessageWithReplyChain, removeMessageFromReplyChain),
       });
     ignoreControl.begin = beginPending;
 
-    expect(
-      await handleTextFragment({
-        chatId: 42,
-        ctx: { message: msg } as TelegramContext,
-        msg,
-        threadSpec: { scope: "none" },
-        storeAllowFrom: [],
-        isAbortControlMessage: false,
-        isAuthorizedAbortControlMessage: async () => true,
-        dispatchDedupeClaims: [],
-        channelIngressResolver: async () => ({ allowed: true }) as never,
-      }),
-    ).toBe(true);
-    await vi.waitFor(() => expect(processMessageWithReplyChain).toHaveBeenCalledTimes(2));
+    await inboundDebouncer.enqueue({
+      ctx: { message: msg } as TelegramContext,
+      msg,
+      allMedia: [],
+      storeAllowFrom: [],
+      receivedAtMs: 1,
+      debounceKey: "telegram:default:42:42:default",
+      debounceLane: "default",
+      threadSpec: { scope: "none" },
+      dispatchDedupeClaims: [],
+      channelIngressResolvers: [async () => ({ allowed: true }) as never],
+      cancelled: false,
+      dispatchAdmission: "pending",
+      dispatchAbortControllers: new Set(),
+      pendingIgnoreSettlements: new Set(),
+    });
+    await inboundDebouncer.drain();
 
-    expect(removeMessageFromGroupHistory).not.toHaveBeenCalled();
     expect(removeMessageFromReplyChain).not.toHaveBeenCalled();
   });
 });

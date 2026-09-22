@@ -140,6 +140,59 @@ describe("telegram message-cache privacy state", () => {
     }
   });
 
+  it("does not let an in-flight recorder reinsert reply context after removal completes", async () => {
+    const messageState = createStore();
+    const privacyState = createStore();
+    const cache = createTelegramMessageCache({
+      bucketKey: messageState.bucketKey,
+      persistentStore: messageState.store,
+      privacyStore: privacyState.store,
+    });
+    const hidden = message(942, "private detail");
+    const reply = message(943, "ordinary reply", {
+      reply_to_message: hidden as NonNullable<Message["reply_to_message"]>,
+      quote: { text: "private detail", position: 0 },
+    });
+    await record(cache, hidden);
+
+    const enteredReplyWrite = createDeferred<void>();
+    const releaseReplyWrite = createDeferred<void>();
+    const registerMessage = messageState.store.register.bind(messageState.store) as (
+      key: string,
+      value: unknown,
+    ) => Promise<void>;
+    messageState.store.register = async (key, value) => {
+      if (key.endsWith(":943")) {
+        enteredReplyWrite.resolve();
+        await releaseReplyWrite.promise;
+      }
+      await registerMessage(key, value);
+    };
+    const recording = record(cache, reply);
+    await enteredReplyWrite.promise;
+
+    const removal = cache.remove({ accountId: "default", chatId: 7, messageId: "942" });
+    await Promise.resolve();
+    releaseReplyWrite.resolve();
+    await Promise.all([recording, removal]);
+
+    const liveReply = await get(cache, "943");
+    expect(liveReply?.replyToId).toBeUndefined();
+    expect(liveReply?.sourceMessage.reply_to_message).toBeUndefined();
+    expect(liveReply?.sourceMessage.quote).toBeUndefined();
+
+    resetTelegramMessageCacheForTest();
+    const restarted = createTelegramMessageCache({
+      bucketKey: messageState.bucketKey,
+      persistentStore: messageState.store,
+      privacyStore: privacyState.store,
+    });
+    const persistedReply = await get(restarted, "943");
+    expect(persistedReply?.replyToId).toBeUndefined();
+    expect(persistedReply?.sourceMessage.reply_to_message).toBeUndefined();
+    expect(persistedReply?.sourceMessage.quote).toBeUndefined();
+  });
+
   it("fails closed when authoritative privacy state cannot hydrate", async () => {
     const messageState = createStore();
     const privacyState = createStore();
@@ -241,7 +294,7 @@ describe("telegram message-cache privacy state", () => {
     await record(cache, crossChatReply);
 
     const recordedReply = await get(cache, "939");
-    expect(recordedReply?.replyToId).toBe("938");
+    expect(recordedReply?.replyToId).toBeUndefined();
     const sourceMessage = recordedReply?.sourceMessage as
       | (Message & { external_reply?: Message })
       | undefined;

@@ -29,7 +29,6 @@ export type TelegramMessageContext = {
   isForum: boolean;
   historyKey?: string;
   historyLimit: BuildTelegramMessageContextParams["historyLimit"];
-  groupHistories: BuildTelegramMessageContextParams["groupHistories"];
   route: ReturnType<typeof resolveTelegramConversationRoute>["route"];
   skillFilter: TelegramMessageContextPayload["skillFilter"];
   sendTyping: () => Promise<void>;

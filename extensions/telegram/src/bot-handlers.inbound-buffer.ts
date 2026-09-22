@@ -40,13 +40,10 @@ export type {
 } from "./bot-handlers.inbound-buffer.types.js";
 
 export function createTelegramInboundBuffers({
-  params: { cfg, accountId, bot, runtime, opts, removeMessageFromGroupHistory },
+  params: { cfg, accountId, bot, runtime, opts },
   message,
 }: {
-  params: Pick<
-    RegisterTelegramHandlerParams,
-    "cfg" | "accountId" | "bot" | "runtime" | "opts" | "removeMessageFromGroupHistory"
-  >;
+  params: Pick<RegisterTelegramHandlerParams, "cfg" | "accountId" | "bot" | "runtime" | "opts">;
   message: TelegramMessagePipeline;
 }): TelegramInboundBuffers {
   const {
@@ -132,7 +129,7 @@ export function createTelegramInboundBuffers({
   ) => {
     await Promise.all(
       entries.map(async (entry) => {
-        removeMessageFromGroupHistory(entry.msg, entry.threadSpec);
+        // Repeat the durable privacy purge so a late cache write cannot race an authorized edit.
         try {
           await removeMessageFromReplyChain(entry.msg);
         } catch (error) {

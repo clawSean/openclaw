@@ -1,13 +1,17 @@
-import { expect, it } from "vitest";
+import { questionGatewayRuntime } from "openclaw/plugin-sdk/question-gateway-runtime";
+import { expect, it, vi } from "vitest";
 import {
   answerCallbackQuerySpy,
   createTelegramBot,
   dispatchReplyWithBufferedBlockDispatcher,
   getOnHandler,
   loadConfig,
+  middlewareUseSpy,
   replySpy,
   sendChatActionSpy,
 } from "./bot.create-telegram-bot.ignore.test-support.js";
+import { makeCallbackRetryContext } from "./bot.create-telegram-bot.test-support.js";
+import { runTelegramTestMiddlewareChain, type TelegramTestContext } from "./bot.test-helpers.js";
 
 export function registerTelegramDeliveryAndDedupeTests(): void {
   it("triggers typing cue via onReplyStart", async () => {
@@ -33,6 +37,7 @@ export function registerTelegramDeliveryAndDedupeTests(): void {
 
   it("dedupes duplicate updates for callback_query, message, and channel_post", async () => {
     loadConfig.mockReturnValue({
+      messages: { inbound: { debounceMs: 0 } },
       channels: {
         telegram: {
           dmPolicy: "open",
@@ -59,38 +64,33 @@ export function registerTelegramDeliveryAndDedupeTests(): void {
       ctx: Record<string, unknown>,
     ) => Promise<void>;
 
-    await callbackHandler({
-      update: { update_id: 222 },
-      callbackQuery: {
-        id: "cb-1",
-        data: "ping",
+    const callbackCtx = (id: string, data: string) =>
+      makeCallbackRetryContext({
+        updateId: 222,
+        id,
+        data,
+        messageId: 9001,
         from: { id: 789, username: "testuser" },
-        message: {
-          chat: { id: 123, type: "private" },
-          date: 1736380800,
-          message_id: 9001,
-        },
-      },
-      me: { username: "openclaw_bot" },
-      getFile: async () => ({}),
-    });
-    await callbackHandler({
-      update: { update_id: 222 },
-      callbackQuery: {
-        id: "cb-question-duplicate",
-        data: "tgq1:ask_0123456789abcdef0123456789abcdef:1",
-        from: { id: 789, username: "testuser" },
-        message: {
-          chat: { id: 123, type: "private" },
-          date: 1736380800,
-          message_id: 9001,
-        },
-      },
-      me: { username: "openclaw_bot" },
-      getFile: async () => ({}),
-    });
-    expect(replySpy).toHaveBeenCalledTimes(1);
-    expect(answerCallbackQuerySpy).toHaveBeenCalledWith("cb-question-duplicate");
+        message: { chat: { id: 123, type: "private" } },
+      });
+    const resolveQuestion = vi
+      .spyOn(questionGatewayRuntime, "resolveOption")
+      .mockRejectedValue(new Error("Unexpected duplicate question resolution"));
+    try {
+      await runTelegramTestMiddlewareChain(
+        middlewareUseSpy,
+        callbackCtx("cb-1", "ping"),
+        async (ctx) => await callbackHandler(ctx as TelegramTestContext),
+      );
+      await callbackHandler(
+        callbackCtx("cb-question-duplicate", "tgq1:ask_0123456789abcdef0123456789abcdef:1"),
+      );
+      expect(replySpy).toHaveBeenCalledTimes(1);
+      expect(answerCallbackQuerySpy).toHaveBeenCalledWith("cb-question-duplicate");
+      expect(resolveQuestion).not.toHaveBeenCalled();
+    } finally {
+      resolveQuestion.mockRestore();
+    }
 
     replySpy.mockClear();
 

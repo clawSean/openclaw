@@ -92,7 +92,6 @@ export function createTelegramInboundProcessing({
     runtime,
     mediaMaxBytes,
     logger,
-    removeMessageFromGroupHistory,
     resolveGroupActivation,
     resolveGroupRequireMention,
   },
@@ -114,7 +113,7 @@ export function createTelegramInboundProcessing({
     resolveTelegramDebounceLane,
     beginPendingBufferedMessageIgnore,
   } = createTelegramInboundBuffers({
-    params: { cfg, accountId, bot, runtime, opts, removeMessageFromGroupHistory },
+    params: { cfg, accountId, bot, runtime, opts },
     message,
   });
 
@@ -130,7 +129,6 @@ export function createTelegramInboundProcessing({
       runtime,
       mediaMaxBytes,
       logger,
-      removeMessageFromGroupHistory,
       resolveGroupActivation,
       resolveGroupRequireMention,
     },

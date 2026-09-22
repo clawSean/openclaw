@@ -1,10 +1,14 @@
 import { formatMediaPlaceholderText } from "openclaw/plugin-sdk/channel-inbound";
 import { timestampMsToIsoString } from "openclaw/plugin-sdk/number-runtime";
+import type { TelegramMediaRef } from "./bot-message-context.types.js";
 import type { TelegramMediaKind, TelegramReplyTarget } from "./bot/helpers.js";
 import type { TelegramReplyChainEntry } from "./message-cache.js";
 import { resolveTelegramPromptMediaPath } from "./prompt-media-path.js";
 
-export function replyTargetToChainEntry(replyTarget: TelegramReplyTarget): TelegramReplyChainEntry {
+export function replyTargetToChainEntry(
+  replyTarget: TelegramReplyTarget,
+  media?: TelegramMediaRef,
+): TelegramReplyChainEntry {
   return {
     ...(replyTarget.id ? { messageId: replyTarget.id } : {}),
     sender: replyTarget.sender,
@@ -13,6 +17,13 @@ export function replyTargetToChainEntry(replyTarget: TelegramReplyTarget): Teleg
     ...(replyTarget.body ? { body: replyTarget.body } : {}),
     ...(replyTarget.mediaType
       ? { mediaKind: replyTarget.mediaType, mediaType: replyTarget.mediaType }
+      : {}),
+    ...(media?.path
+      ? {
+          mediaPath: media.path,
+          mediaKind: media.kind,
+          ...(media.contentType ? { mediaType: media.contentType } : {}),
+        }
       : {}),
     ...(replyTarget.kind === "quote" ? { isQuote: true } : {}),
     ...(replyTarget.forwardedFrom?.from ? { forwardedFrom: replyTarget.forwardedFrom.from } : {}),

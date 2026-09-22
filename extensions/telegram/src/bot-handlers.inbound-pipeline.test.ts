@@ -80,6 +80,86 @@ describe("buildTelegramInboundDebounceKey", () => {
   });
 });
 
+describe("album prompt-context ordering", () => {
+  it("records an album member before handing it to the delayed media flush", async () => {
+    inboundProcessing.beginPendingBufferedMessageIgnore.mockReset();
+    inboundProcessing.beginPendingMediaGroupIgnore.mockReset();
+    inboundProcessing.processInboundMessage.mockReset();
+    const recordMessageForReplyChain = vi.fn(async () => undefined);
+    inboundProcessing.processInboundMessage.mockImplementationOnce(async () => {
+      expect(recordMessageForReplyChain).toHaveBeenCalledOnce();
+      return { kind: "completed" };
+    });
+    const authorization = {
+      authorizeInboundMessage: vi.fn(async () => ({
+        allowed: true,
+        effectiveDmAllow: [],
+        context: {
+          cfg: {},
+          telegramCfg: {},
+          dmPolicy: "open",
+          threadSpec: { scope: "none" },
+          storeAllowFrom: [],
+          effectiveGroupAllow: [],
+        },
+      })),
+    } as unknown as TelegramHandlerAuthorization;
+    const params = {
+      accountId: "default",
+      bot: { api: { getChat: vi.fn(), sendMessage: vi.fn() } },
+      cfg: { commands: { native: true } },
+      opts: { botInfo: { id: 7, username: "openclaw_bot" } },
+      runtime: { error: vi.fn() },
+      shouldSkipUpdate: () => false,
+      telegramCfg: { commands: { native: true } },
+    } as unknown as RegisterTelegramHandlerParams;
+    const message = {
+      normalizePromptContextMinTimestampMs: () => undefined,
+      promptContextBoundaryOptions: () => ({}),
+      releaseDispatchDedupeClaims: vi.fn(),
+      claimMessageDispatchDedupe: vi.fn(async () => ({ process: true, claims: [] })),
+      buildSyntheticContext: (ctx: Context, syntheticMessage: Message) =>
+        Object.assign(ctx, { message: syntheticMessage }),
+      resolveTelegramSessionState: () => ({
+        sessionEntry: undefined,
+        sessionKey: "album-ordering",
+        storePath: "album-ordering",
+      }),
+      resolvePromptContextAmbientWatermark: () => undefined,
+      recordMessageForReplyChain,
+      removeMessageFromReplyChain: vi.fn(),
+      isMessageIgnoredForReplyChain: vi.fn(async () => false),
+    } as unknown as TelegramMessagePipeline;
+    const pipeline = createTelegramInboundPipeline({ params, message, authorization });
+    const msg = {
+      chat: { id: 42, type: "private", first_name: "Ada" },
+      message_id: 11,
+      date: 1_736_371_600,
+      media_group_id: "album-before-question",
+      from: { id: 9, is_bot: false, first_name: "Ada" },
+      caption: "Deployment diagram",
+      photo: [{ file_id: "p1", file_unique_id: "u1", width: 1, height: 1 }],
+    } as Message;
+
+    await pipeline.handle({
+      message: msg,
+      me: { id: 7, username: "openclaw_bot" },
+      update: { update_id: 12, message: msg },
+    } as unknown as Context);
+
+    expect(recordMessageForReplyChain).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        message_id: 11,
+        media_group_id: "album-before-question",
+        caption: "Deployment diagram",
+      }),
+      { scope: "none" },
+      7,
+      "openclaw_bot",
+    );
+  });
+});
+
 describe("edited /ignore handling", () => {
   it("resumes a buffered album when an edited /ignore is denied", async () => {
     const settle = vi.fn(async () => false);
@@ -102,7 +182,6 @@ describe("edited /ignore handling", () => {
       opts: { botInfo: { id: 7, username: "openclaw_bot" } },
       runtime: { error: vi.fn() },
       shouldSkipUpdate: () => false,
-      removeMessageFromGroupHistory: vi.fn(),
       telegramCfg: { commands: { native: true } },
     } as unknown as RegisterTelegramHandlerParams;
     const message = {
@@ -159,7 +238,6 @@ describe("edited /ignore handling", () => {
       opts: { botInfo: { id: 7, username: "openclaw_bot" } },
       runtime: { error: vi.fn() },
       shouldSkipUpdate: () => false,
-      removeMessageFromGroupHistory: vi.fn(),
       telegramCfg: { commands: { native: true } },
     } as unknown as RegisterTelegramHandlerParams;
     const removeMessageFromReplyChain = vi.fn(async () => true);
@@ -204,7 +282,6 @@ describe("edited /ignore handling", () => {
         context: { threadSpec: { scope: "none" } },
       })),
     } as unknown as TelegramHandlerAuthorization;
-    const removeMessageFromGroupHistory = vi.fn();
     const params = {
       accountId: "default",
       bot: { api: { getChat: vi.fn(), sendMessage: vi.fn() } },
@@ -212,7 +289,6 @@ describe("edited /ignore handling", () => {
       opts: { botInfo: { id: 7, username: "openclaw_bot" } },
       runtime: { error: vi.fn() },
       shouldSkipUpdate: () => false,
-      removeMessageFromGroupHistory,
       telegramCfg: { commands: { native: true } },
     } as unknown as RegisterTelegramHandlerParams;
     const removeMessageFromReplyChain = vi.fn(async () => true);
@@ -238,10 +314,6 @@ describe("edited /ignore handling", () => {
       update: { update_id: 15, message: msg },
     } as unknown as Context);
 
-    expect(removeMessageFromGroupHistory).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ message_id: 14 }),
-      { scope: "none" },
-    );
     expect(removeMessageFromReplyChain).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ message_id: 14 }),
     );
@@ -257,7 +329,6 @@ describe("edited /ignore handling", () => {
         context: { threadSpec: { scope: "none" } },
       })),
     } as unknown as TelegramHandlerAuthorization;
-    const removeMessageFromGroupHistory = vi.fn();
     const params = {
       accountId: "default",
       bot: { api: { getChat: vi.fn(), sendMessage: vi.fn() } },
@@ -266,7 +337,6 @@ describe("edited /ignore handling", () => {
       pluginNativeCommandNames: new Set(["ignore"]),
       runtime: { error: vi.fn() },
       shouldSkipUpdate: () => false,
-      removeMessageFromGroupHistory,
       telegramCfg: { commands: { native: true } },
     } as unknown as RegisterTelegramHandlerParams;
     const recordMessageForReplyChain = vi.fn(async () => undefined);
@@ -301,7 +371,6 @@ describe("edited /ignore handling", () => {
     );
     expect(inboundProcessing.beginPendingBufferedMessageIgnore).not.toHaveBeenCalled();
     expect(inboundProcessing.beginPendingMediaGroupIgnore).not.toHaveBeenCalled();
-    expect(removeMessageFromGroupHistory).not.toHaveBeenCalled();
     expect(removeMessageFromReplyChain).not.toHaveBeenCalled();
   });
 });

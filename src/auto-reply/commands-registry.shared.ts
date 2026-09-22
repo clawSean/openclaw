@@ -4,6 +4,7 @@ import { normalizeStringEntries } from "../../packages/normalization-core/src/st
 import { formatFastModeAutoLabel, resolveFastModeModelAutoOnSeconds } from "../shared/fast-mode.js";
 import { COMMAND_ARG_FORMATTERS } from "./commands-args.js";
 import type {
+  BuiltinCommandOptions,
   ChatCommandDefinition,
   CommandArgChoiceContext,
   CommandCategory,
@@ -97,15 +98,6 @@ type BuiltinCommandArgumentOptions = Omit<
   BuiltinCommandArgument,
   "name" | "description" | "type"
 > & { type?: BuiltinCommandArgument["type"] };
-type BuiltinCommandOptions = Omit<
-  ChatCommandDefinition,
-  "key" | "description" | "category" | "tier" | "nativeName" | "textAliases" | "scope"
-> & {
-  nativeName?: string | false;
-  scope?: ChatCommandDefinition["scope"];
-  textAliases?: string[];
-};
-
 function defineCommandArgument(
   name: string,
   description: string,

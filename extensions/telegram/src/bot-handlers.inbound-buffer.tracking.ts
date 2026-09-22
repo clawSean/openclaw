@@ -35,9 +35,7 @@ export function createTelegramBufferedMessageTracker() {
     msg: Message,
   ): PendingBufferedMessageIgnore | undefined => {
     const key = bufferedMessageKey(msg);
-    const owners: BufferedMessageOwner[] = [
-      ...(debounceEntriesByMessage.get(key) ?? []),
-    ];
+    const owners: BufferedMessageOwner[] = [...(debounceEntriesByMessage.get(key) ?? [])];
     if (owners.length === 0) {
       return undefined;
     }

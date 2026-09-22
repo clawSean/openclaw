@@ -70,7 +70,6 @@ export function createTelegramInboundMedia({
     | "runtime"
     | "mediaMaxBytes"
     | "logger"
-    | "removeMessageFromGroupHistory"
     | "resolveGroupActivation"
     | "resolveGroupRequireMention"
   >;
@@ -83,7 +82,6 @@ export function createTelegramInboundMedia({
     runtime,
     mediaMaxBytes,
     logger,
-    removeMessageFromGroupHistory,
     resolveGroupActivation,
     resolveGroupRequireMention,
   } = params;
@@ -121,7 +119,6 @@ export function createTelegramInboundMedia({
     stopCancelledEntry,
   } = createTelegramMediaGroupRegistry({
     ...message,
-    removeMessageFromGroupHistory,
     timeoutMs,
   });
 

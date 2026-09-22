@@ -34,13 +34,7 @@ import type { TelegramMessageDispatchReplayClaim } from "./message-dispatch-dedu
 
 type TelegramMessageHandlerParams = Pick<
   RegisterTelegramHandlerParams,
-  | "accountId"
-  | "bot"
-  | "cfg"
-  | "pluginNativeCommandNames"
-  | "removeMessageFromGroupHistory"
-  | "shouldSkipUpdate"
-  | "telegramCfg"
+  "accountId" | "bot" | "cfg" | "pluginNativeCommandNames" | "shouldSkipUpdate" | "telegramCfg"
 > & {
   opts: Pick<RegisterTelegramHandlerParams["opts"], "botInfo">;
   runtime: Pick<RegisterTelegramHandlerParams["runtime"], "error">;
@@ -77,7 +71,6 @@ function createTelegramInboundHandlers(
     cfg,
     opts,
     pluginNativeCommandNames,
-    removeMessageFromGroupHistory,
     runtime,
     shouldSkipUpdate,
     telegramCfg,
@@ -232,9 +225,7 @@ function createTelegramInboundHandlers(
       if (ignoreDisposition !== "keep") {
         pendingBufferedMessageIgnore?.settle(true);
         await pendingMediaGroupIgnore?.settle(true);
-        // Reply-chain cache and rolling group history are independent prompt context owners.
-        removeMessageFromGroupHistory(normalizedMsg, gate.context.threadSpec);
-        // The durable privacy owner is independent from transient buffer/album ownership.
+        // The message cache is the single durable owner for reply and group-history context.
         await removeMessageFromReplyChain(normalizedMsg);
         if (ignoreDisposition === "help") {
           await sendIgnoreHelp(normalizedMsg, gate.context.threadSpec);
@@ -302,7 +293,6 @@ function createTelegramInboundHandlers(
         // Every ignored update gets a durable privacy owner so a later edit/replay cannot revive
         // it after native-command policy or bot identity changes.
         await event.pendingMediaGroupIgnore?.settle(true);
-        removeMessageFromGroupHistory(event.msg, gate.context.threadSpec);
         await removeMessageFromReplyChain(event.msg);
         if (ignoreDisposition === "help") {
           await sendIgnoreHelp(event.msg, gate.context.threadSpec);
@@ -347,14 +337,15 @@ function createTelegramInboundHandlers(
         return { kind: "ignored" };
       }
       dispatchDedupeClaims = dispatchDedupe.claims;
-      if (!event.msg.media_group_id) {
-        await recordMessageForReplyChain(
-          event.msg,
-          gate.context.threadSpec,
-          event.botUserId,
-          event.ctx.me?.username ?? opts.botInfo?.username,
-        );
-      }
+      // Observe album members before the quiet-window flush so a following message cannot
+      // overtake their captions/placeholders in prompt context. A later authorized /ignore
+      // member removes the whole media group and installs its durable privacy tombstone.
+      await recordMessageForReplyChain(
+        event.msg,
+        gate.context.threadSpec,
+        event.botUserId,
+        event.ctx.me?.username ?? opts.botInfo?.username,
+      );
       return await processInboundMessage({
         authorizationCfg: gate.context.cfg,
         ctx: event.ctx,

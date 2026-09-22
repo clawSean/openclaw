@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { expect, it, type Mock } from "vitest";
+import { expect, it } from "vitest";
 
 type ChannelPostHandler = (ctx: Record<string, unknown>) => Promise<void>;
 const MEDIA_GROUP_FLUSH_MS = 20;
@@ -27,7 +27,7 @@ function createChannelPostContext(params: {
 }
 
 export function addIgnoreAlbumTests(
-  loadConfig: Mock,
+  loadConfig: { mockReturnValue: (value: unknown) => unknown },
   getChannelPostHandler: () => ChannelPostHandler,
   outputSpies: readonly unknown[],
 ): void {

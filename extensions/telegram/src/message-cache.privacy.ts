@@ -1,7 +1,15 @@
 import type { Message } from "grammy/types";
 import { resolveTelegramIgnoreDisposition } from "./ignore-command.js";
 import { TELEGRAM_MESSAGE_PRIVACY_PERSISTENT_MAX_ENTRIES } from "./message-cache-persistence.js";
-import type { TelegramMessageCacheBucket } from "./message-cache.types.js";
+
+type TelegramMessageCachePrivacyBucket = {
+  ignoredMessages: Set<string>;
+  ignoredMediaGroups: Set<string>;
+  privacyIdentities: Map<
+    string,
+    { kind: "ignored-message" | "ignored-media-group"; identity: string }
+  >;
+};
 
 type MessageWithExternalReply = Message & { external_reply?: Message };
 
@@ -44,7 +52,7 @@ export function telegramIgnoredMediaGroupKey(params: {
 }
 
 export function readIgnoredMessageIds(params: {
-  bucket: TelegramMessageCacheBucket;
+  bucket: TelegramMessageCachePrivacyBucket;
   accountId: string;
   chatId: string | number;
 }): Set<string> {
@@ -60,7 +68,7 @@ export function readIgnoredMessageIds(params: {
 }
 
 export function registerPrivacyIdentity(
-  bucket: TelegramMessageCacheBucket,
+  bucket: TelegramMessageCachePrivacyBucket,
   entry: { kind: "ignored-message" | "ignored-media-group"; identity: string },
 ): void {
   const key = `${entry.kind}\0${entry.identity}`;
@@ -84,7 +92,7 @@ export function registerPrivacyIdentity(
 }
 
 export function readIgnoredMediaGroupIds(params: {
-  bucket: TelegramMessageCacheBucket;
+  bucket: TelegramMessageCachePrivacyBucket;
   accountId: string;
   chatId: string | number;
 }): Set<string> {
@@ -121,16 +129,6 @@ export function detachReplyTargetsByPrivacy(
         params.ignoredMediaGroupIds.has(reply.media_group_id))
     );
   });
-}
-
-export function resolveReplyMessage(msg: Message): Message | undefined {
-  // SAFETY: Telegram can supply external_reply even though this grammY Message version omits it.
-  const externalReply = (msg as MessageWithExternalReply).external_reply;
-  return msg.reply_to_message ?? externalReply;
-}
-
-export function resolveEmbeddedReplyMessage(msg: Message): Message | undefined {
-  return msg.reply_to_message;
 }
 
 type TelegramReplyTargetKind = "reply_to_message" | "external_reply";

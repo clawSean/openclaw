@@ -2,9 +2,11 @@ import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { expect, it, vi } from "vitest";
 import {
   createTelegramBot,
+  createPluginRuntimeMock,
   dispatchReplyWithBufferedBlockDispatcher,
   getOnHandler,
   loadConfig,
+  onSpy,
   pluginStateTestRuntime,
   replySpy,
   requireValue,
@@ -24,9 +26,10 @@ export function registerTelegramIgnoreAlbumRaceTests(): void {
     const openKeyedStore: TelegramRuntime["state"]["openKeyedStore"] = <T>(
       options: Parameters<TelegramRuntime["state"]["openKeyedStore"]>[0],
     ) => pluginStateTestRuntime.createPluginStateKeyedStoreForTests<T>("telegram", options);
-    setTelegramRuntime({ state: { openKeyedStore }, channel: {} } as TelegramRuntime);
+    setTelegramRuntime(createPluginRuntimeMock({ state: { openKeyedStore } }) as TelegramRuntime);
     loadConfig.mockReturnValue({
       commands: { native: true },
+      messages: { inbound: { debounceMs: 0 } },
       channels: {
         telegram: {
           groupPolicy: "open",
@@ -131,6 +134,7 @@ export function registerTelegramIgnoreAlbumRaceTests(): void {
   it("keeps an authorized middle /ignore as the album owner through the quiet window", async () => {
     loadConfig.mockReturnValue({
       commands: { native: true },
+      messages: { inbound: { debounceMs: 0 } },
       channels: {
         telegram: {
           groupPolicy: "open",
@@ -252,6 +256,7 @@ export function registerTelegramIgnoreAlbumRaceTests(): void {
   it("removes admitted album history when a late member carries /ignore", async () => {
     loadConfig.mockReturnValue({
       commands: { native: true },
+      messages: { inbound: { debounceMs: 0 } },
       channels: {
         telegram: {
           groupPolicy: "open",
@@ -288,7 +293,10 @@ export function registerTelegramIgnoreAlbumRaceTests(): void {
         me: { id: 7, username: "openclaw_bot" },
         getFile,
       });
-      await waitForTelegramMockCalls(dispatchReplyWithBufferedBlockDispatcher, 1);
+      await vi.waitFor(
+        () => expect(dispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(1),
+        { timeout: 5_000 },
+      );
       await messageHandler({
         message: {
           ...album,
@@ -324,12 +332,17 @@ export function registerTelegramIgnoreAlbumRaceTests(): void {
   });
 
   it("cancels an in-flight album when a member is edited to /ignore after flush", async () => {
+    const openKeyedStore: TelegramRuntime["state"]["openKeyedStore"] = <T>(
+      options: Parameters<TelegramRuntime["state"]["openKeyedStore"]>[0],
+    ) => pluginStateTestRuntime.createPluginStateKeyedStoreForTests<T>("telegram", options);
+    setTelegramRuntime(createPluginRuntimeMock({ state: { openKeyedStore } }) as TelegramRuntime);
     loadConfig.mockReturnValue({
       commands: { native: true },
+      messages: { inbound: { debounceMs: 0 } },
       channels: {
         telegram: {
-          groupPolicy: "open",
-          groups: { "*": { requireMention: false } },
+          dmPolicy: "open",
+          allowFrom: ["*"],
         },
       },
     });
@@ -376,7 +389,7 @@ export function registerTelegramIgnoreAlbumRaceTests(): void {
       ctx: Record<string, unknown>,
     ) => Promise<void>;
     const base = {
-      chat: { id: -100123456789, type: "group", title: "Test Group" },
+      chat: { id: 1234, type: "private", first_name: "Human" },
       date: 2_000_000_000,
       media_group_id: "in-flight-edited-ignore",
       from: { id: 999, username: "human" },
@@ -393,7 +406,19 @@ export function registerTelegramIgnoreAlbumRaceTests(): void {
       me: { id: 7, username: "openclaw_bot" },
       getFile: getFileSpy,
     });
-    await vi.waitFor(() => expect(getFileSpy).toHaveBeenCalledOnce());
+    await vi.waitFor(
+      () =>
+        expect(
+          getFileSpy,
+          JSON.stringify({
+            dispatches: dispatchReplyWithBufferedBlockDispatcher.mock.calls.length,
+            fetches: mediaFetch.mock.calls.length,
+            runtimeErrors: runtimeError.mock.calls,
+            sends: sendMessageSpy.mock.calls.length,
+          }),
+        ).toHaveBeenCalledOnce(),
+      { timeout: 5_000 },
+    );
 
     await editedHandler({
       editedMessage: {

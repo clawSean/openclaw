@@ -1,3 +1,4 @@
+import { createPluginRuntimeMock } from "openclaw/plugin-sdk/channel-test-helpers";
 import * as pluginStateTestRuntime from "openclaw/plugin-sdk/plugin-state-test-runtime";
 import { vi } from "vitest";
 import {
@@ -20,6 +21,7 @@ const {
   dispatchReplyWithBufferedBlockDispatcher,
   getLoadConfigMock,
   getOnHandler,
+  middlewareUseSpy,
   onSpy,
   replySpy,
   sendChatActionSpy,
@@ -51,9 +53,11 @@ function requireValue<T>(value: T | null | undefined, label: string): T {
 export {
   answerCallbackQuerySpy,
   createTelegramBot,
+  createPluginRuntimeMock,
   dispatchReplyWithBufferedBlockDispatcher,
   getOnHandler,
   loadConfig,
+  middlewareUseSpy,
   onSpy,
   pluginStateTestRuntime,
   replySpy,
