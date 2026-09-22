@@ -131,13 +131,17 @@ describe("runCodexAppServerAttempt final source reply watches", () => {
     }
   });
 
-  it("drains a dynamic tool admitted before a parallel final source reply", async () => {
+  it("aborts a hanging dynamic tool when the parallel final-source turn completes", async () => {
     const mutationEntered = createDeferred<void>();
+    const mutationAborted = createDeferred<unknown>();
     const releaseMutation = createDeferred<void>();
     let mutationSignal: AbortSignal | undefined;
     const mutationTool = createRuntimeDynamicTool("mutate_before_final");
-    mutationTool.execute = vi.fn(async (_id, _args, signal) => {
+    const executeMutation = vi.fn(async (_id: string, _args: unknown, signal?: AbortSignal) => {
       mutationSignal = signal;
+      signal?.addEventListener("abort", () => mutationAborted.resolve(signal.reason), {
+        once: true,
+      });
       mutationEntered.resolve();
       await releaseMutation.promise;
       return {
@@ -145,6 +149,7 @@ describe("runCodexAppServerAttempt final source reply watches", () => {
         details: {},
       };
     });
+    mutationTool.execute = executeMutation;
     const messageTool = createFinalMessageTool("source-reply-parallel");
     const harness = createStartedThreadHarness();
     const params = configureFinalSourceReplyAttempt();
@@ -186,19 +191,22 @@ describe("runCodexAppServerAttempt final source reply watches", () => {
 
       expect(mutationSignal?.aborted).toBe(false);
       await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
+      await expect(mutationAborted.promise).resolves.toBe("codex_turn_complete");
+      expect(mutationSignal).toMatchObject({ aborted: true, reason: "codex_turn_complete" });
+      await expect(mutationResponse).resolves.toMatchObject({ success: false });
+
+      releaseMutation.resolve();
+      await executeMutation.mock.results[0]?.value;
       await new Promise<void>((resolve) => {
         setImmediate(resolve);
       });
-      expect(runSettled).not.toHaveBeenCalled();
-
-      releaseMutation.resolve();
-      await expect(mutationResponse).resolves.toMatchObject({ success: true });
       const result = await run;
+      expect(runSettled).toHaveBeenCalledOnce();
       expectSuccessfulAttempt(result);
       expect(mutationTool.execute).toHaveBeenCalledTimes(1);
       expect(result.toolMetas).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ toolName: "mutate_before_final", isError: false }),
+          expect.objectContaining({ toolName: "mutate_before_final", isError: true }),
         ]),
       );
     } finally {
