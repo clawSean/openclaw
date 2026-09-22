@@ -51,7 +51,7 @@ export function createCodexServerRequestAdmissionController() {
   const turnController = new AbortController();
   const active = new Set<AdmissionEntry>();
   let sealed = false;
-  let preservedOwner: AbortController | undefined;
+  let closed = false;
 
   const admit = (options?: { preserveOnSeal?: boolean }): CodexServerRequestAdmission => {
     const controller = new AbortController();
@@ -59,7 +59,9 @@ export function createCodexServerRequestAdmissionController() {
       controller,
       preserveOnSeal: options?.preserveOnSeal === true,
     };
-    if (sealed) {
+    if (closed) {
+      controller.abort("codex_turn_complete");
+    } else if (sealed) {
       controller.abort("codex_final_source_reply_committed");
     } else {
       active.add(entry);
@@ -68,27 +70,18 @@ export function createCodexServerRequestAdmissionController() {
       signal: controller.signal,
       release: () => {
         active.delete(entry);
-        if (preservedOwner === controller) {
-          preservedOwner = undefined;
-        }
       },
     };
   };
 
   const seal = (owner?: CodexServerRequestAdmission) => {
-    if (sealed) {
-      if (!owner && preservedOwner) {
-        const controller = preservedOwner;
-        preservedOwner = undefined;
-        controller.abort("codex_turn_complete");
-      }
+    if (sealed || closed) {
       return;
     }
     sealed = true;
     turnController.abort("codex_final_source_reply_committed");
     for (const { controller, preserveOnSeal } of active) {
       if (controller.signal === owner?.signal) {
-        preservedOwner = controller;
         continue;
       }
       if (!preserveOnSeal) {
@@ -97,9 +90,22 @@ export function createCodexServerRequestAdmissionController() {
     }
   };
 
+  const close = () => {
+    if (closed) {
+      return;
+    }
+    closed = true;
+    sealed = true;
+    turnController.abort("codex_turn_complete");
+    for (const { controller } of active) {
+      controller.abort("codex_turn_complete");
+    }
+  };
+
   return {
     signal: turnController.signal,
     admit,
+    close,
     seal,
   };
 }

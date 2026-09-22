@@ -120,7 +120,7 @@ export function createCodexAttemptTurnState(resources: CodexAttemptResources) {
     }
     state.completed = true;
     clearTerminalReleaseDeadline();
-    serverRequestAdmission.seal();
+    serverRequestAdmission.close();
     steeringQueueRef.current?.cancel();
     deadlines.beginSettlement(Date.now());
     resolveCompletion();
