@@ -3,13 +3,17 @@ import type { EmbeddedRunAttemptParamsV2 as EmbeddedRunAttemptParams } from "ope
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 import { createCodexDynamicToolSpecs, projectCodexDynamicTools } from "./dynamic-tool-catalog.js";
+import type { CodexDynamicToolRuntimeResponse } from "./dynamic-tool-response-state.js";
 import { createCodexDynamicToolBridge } from "./dynamic-tools.js";
 import {
   flattenCodexDynamicToolFunctions,
   type CodexDynamicToolFunctionSpec,
   type CodexDynamicToolSpec,
 } from "./protocol.js";
-import { resolveCodexDynamicToolDirectNames } from "./run-attempt-tools.js";
+import {
+  createCodexDynamicToolExecutionRegistry,
+  resolveCodexDynamicToolDirectNames,
+} from "./run-attempt-tools.js";
 import { codexDynamicToolsFingerprint } from "./thread-fingerprints.js";
 
 function createAttemptParams(
@@ -241,4 +245,24 @@ it("keeps the persistent dynamic schema stable across heartbeat-only turns", asy
   expect(specNames(heartbeatBridge.availableSpecs)).toEqual(["heartbeat_respond"]);
   expect(specNames(heartbeatBridge.specs)).toEqual(specNames(normalBridge.specs));
   expect(specNames(nextNormalBridge.specs)).toEqual(specNames(normalBridge.specs));
+});
+
+describe("createCodexDynamicToolExecutionRegistry", () => {
+  it("publishes call ownership before a synchronous reentrant replay", async () => {
+    const registry = createCodexDynamicToolExecutionRegistry();
+    const call = { threadId: "thread-1", turnId: "turn-1", callId: "call-1" };
+    const ownerResponse: CodexDynamicToolRuntimeResponse = { success: false, contentItems: [] };
+    let replayedExecution: Promise<CodexDynamicToolRuntimeResponse> | undefined;
+
+    const owner = registry.claim(call, async () => {
+      replayedExecution = registry.claim(call, async () => ({
+        success: true,
+        contentItems: [],
+      })).execution;
+      return ownerResponse;
+    });
+
+    expect(replayedExecution).toBe(owner.execution);
+    await expect(owner.execution).resolves.toBe(ownerResponse);
+  });
 });

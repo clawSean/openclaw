@@ -191,6 +191,7 @@ export type CodexDynamicToolBridge = {
       onAgentToolResult?: EmbeddedRunAttemptParams["onAgentToolResult"];
       toolCallOrdinal?: number;
       retainExecutionSnapshot?: boolean;
+      onFinalSourceReplyDelivery?: () => void;
     },
   ) => Promise<CodexDynamicToolRuntimeResponse>;
   /** Consume exact boundary evidence retained while post-execution processing is incomplete. */
@@ -432,6 +433,7 @@ export function createCodexDynamicToolBridge(params: {
         confirmedMessagingTarget: MessagingToolSend | undefined;
         deliveredSourceReply: boolean;
       };
+      let rawFinalSourceReplyDeliveryRecorded = false;
       let executedArgsForPresentation = args;
       let rawIsErrorForPresentation = false;
       let telemetryRawResultForPresentation: unknown;
@@ -557,6 +559,10 @@ export function createCodexDynamicToolBridge(params: {
             confirmedMessagingTarget,
             deliveredSourceReply,
           };
+          if (deliveredSourceReply && executedArgs.final !== false) {
+            rawFinalSourceReplyDeliveryRecorded = true;
+            options?.onFinalSourceReplyDelivery?.();
+          }
         },
         snapshotResult: (rawResult) => {
           telemetryRawResultForPresentation = sanitizeToolResult(rawResult);
@@ -719,6 +725,11 @@ export function createCodexDynamicToolBridge(params: {
           response.executionStarted = executionBoundary.executionStarted;
           response.replaySafe = replaySafe;
           response.sideEffectEvidence = !replaySafe || undefined;
+          response.finalCurrentSourceReply =
+            (confirmedSourceReply && sourceReplyFinal === true) || undefined;
+          if (response.finalCurrentSourceReply && !rawFinalSourceReplyDeliveryRecorded) {
+            options?.onFinalSourceReplyDelivery?.();
+          }
           return response;
         },
         onError: ({

@@ -31,6 +31,11 @@ import { mapCodexAppServerRemoteWorkspacePath } from "./remote-workspace-path.js
 import type { CodexAttemptLifecycleController } from "./run-attempt-lifecycle-controller.js";
 import type { CodexAttemptNotificationController } from "./run-attempt-notification-controller.js";
 import type { CodexAttemptResources } from "./run-attempt-resources.js";
+import {
+  assertCodexTerminalReleaseInputAuthority,
+  isCodexMessageInjectionAvailable,
+  type CodexInputAuthority,
+} from "./run-attempt-server-request-admission.js";
 import type { CodexStartedTurn } from "./run-attempt-turn-request.js";
 import type { CodexAttemptTurnState } from "./run-attempt-turn-state.js";
 import {
@@ -75,6 +80,7 @@ export function activateCodexAttemptTurn(
     completion,
     userInputBridgeRef,
     steeringQueueRef,
+    serverRequestAdmission,
     deadlines,
     noteProgress,
     completeTurn,
@@ -342,7 +348,7 @@ export function activateCodexAttemptTurn(
   const assertSteeringActive = () => {
     connection.assertCurrent();
     runAbortController.signal.throwIfAborted();
-    if (state.completed || state.terminalTurnNotificationQueued) {
+    if (state.completed || state.terminalTurnNotificationQueued || state.finalSourceReplyCommit) {
       throw new Error("codex app-server turn is no longer accepting steering");
     }
   };
@@ -464,9 +470,6 @@ export function activateCodexAttemptTurn(
     },
   });
   steeringQueueRef.current = activeSteeringQueue;
-  type InputAuthority = NonNullable<
-    Parameters<typeof claimPendingAgentQuestionAnswer>[0]["authority"]
-  >;
   const injectionGuard = (assertCurrent?: () => void) => () => {
     assertCurrent?.();
     assertSteeringActive();
@@ -476,7 +479,7 @@ export function activateCodexAttemptTurn(
     text: string,
     optionsLocal?: CodexSteeringQueueOptions,
     assertCurrent?: () => void,
-    authorityKind: InputAuthority["kind"] = assertCurrent ? "source-bound" : "run",
+    authorityKind: CodexInputAuthority["kind"] = assertCurrent ? "source-bound" : "run",
   ) => {
     if (optionsLocal?.isInboundUserMessage !== true || hasPromptImageInput(optionsLocal)) {
       return false;
@@ -499,7 +502,7 @@ export function activateCodexAttemptTurn(
   const cancelPendingUserInput = (
     resolvedBy: string,
     assertCurrent?: () => void,
-    authorityKind: InputAuthority["kind"] = assertCurrent ? "source-bound" : "run",
+    authorityKind: CodexInputAuthority["kind"] = assertCurrent ? "source-bound" : "run",
   ) =>
     cancelPendingAgentQuestionForSession({
       sessionKey: params.sessionKey ?? params.sessionId,
@@ -511,16 +514,31 @@ export function activateCodexAttemptTurn(
     text: string,
     optionsLocal?: CodexSteeringQueueOptions,
     assertCurrent?: () => void,
-    authorityKind: InputAuthority["kind"] = assertCurrent ? "source-bound" : "run",
+    authorityKind: CodexInputAuthority["kind"] = assertCurrent ? "source-bound" : "run",
   ) => {
     const canClaim = injectionGuard(assertCurrent);
+    const isInboundUserMessage = optionsLocal?.isInboundUserMessage === true;
+    if (state.finalSourceReplyCommit) {
+      if (isInboundUserMessage) {
+        assertCodexTerminalReleaseInputAuthority({
+          assertCurrent,
+          assertConnectionCurrent: () => connection.assertCurrent(),
+          signal: runAbortController.signal,
+          state,
+        });
+        lifecycle.interruptTurnForTerminalRelease("new_inbound_message");
+      }
+      // Final delivery sealed this queue. Let the canonical rejection path tell
+      // the gateway to admit the message on a fresh turn instead of losing it.
+      return await activeSteeringQueue.queue(text, optionsLocal, injectionGuard(assertCurrent));
+    }
     if (await claimPendingUserInputAnswer(text, optionsLocal, assertCurrent, authorityKind)) {
       // A question claim is already consumption. Closing the run during its
       // response must not turn that answer into a rejected, replayable steer.
       optionsLocal?.onQueueAccepted?.(true);
       return undefined;
     }
-    if (optionsLocal?.isInboundUserMessage === true && hasPromptImageInput(optionsLocal)) {
+    if (isInboundUserMessage && hasPromptImageInput(optionsLocal)) {
       assertSteeringActive();
       try {
         await cancelPendingUserInput("image-reply", assertCurrent, authorityKind);
@@ -550,10 +568,7 @@ export function activateCodexAttemptTurn(
   };
   const messageInjection = {
     version: 2 as const,
-    isAvailable: () =>
-      !state.completed &&
-      !state.terminalTurnNotificationQueued &&
-      !runAbortController.signal.aborted,
+    isAvailable: () => isCodexMessageInjectionAvailable(state, runAbortController.signal),
     queueMessage,
     claimPendingUserInputAnswer,
     cancelPendingUserInput,
@@ -625,7 +640,7 @@ export function activateCodexAttemptTurn(
         onOrdinaryResponse: (response) => activeProjector.recordUserInputResponse(response),
         threadId: resourceState.thread.threadId,
         turnId: activeTurnId,
-        signal: runAbortController.signal,
+        signal: AbortSignal.any([runAbortController.signal, serverRequestAdmission.signal]),
       });
       trajectoryRecorder?.recordEvent("prompt.submitted", {
         threadId: resourceState.thread.threadId,
