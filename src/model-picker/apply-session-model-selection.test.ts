@@ -12,6 +12,7 @@ import {
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { ModelDefinitionConfig } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { projectSessionsPatchEntry } from "../gateway/sessions-patch.js";
 import {
   onSessionLifecycleEvent,
   type SessionLifecycleEvent,
@@ -20,8 +21,11 @@ import { createModelSelectionInputs } from "./apply-session-model-selection.test
 
 // Runtime eligibility belongs to the published-owner tests; these cases exercise its consumers.
 vi.mock("../agents/model-runtime-choice.js", () => ({
-  preparePublishedModelRuntimeChoice: vi.fn(async () => ({
+  preparePublishedModelRuntimeChoice: vi.fn<
+    typeof import("../agents/model-runtime-choice.js").preparePublishedModelRuntimeChoice
+  >(async ({ runtimeId, preferredRuntimeId }) => ({
     kind: "ready",
+    runtimeId: runtimeId ?? preferredRuntimeId ?? "openclaw",
     validate: () => undefined,
   })),
 }));
@@ -365,6 +369,7 @@ describe("applySessionModelSelection", () => {
     });
     const result = await applySessionModelSelection(
       createParams({
+        cfg: { agents: { defaults: { model: "anthropic/claude-opus-4-6" } } },
         sessionEntry,
         currentProvider: "openai",
         currentModel: "gpt-4o",
@@ -372,7 +377,8 @@ describe("applySessionModelSelection", () => {
           provider: "anthropic",
           model: "claude-opus-4-6",
           isDefault: true,
-          runtime: { kind: "unchanged" },
+          resetToDefault: true,
+          runtime: { kind: "clear" },
         },
       }),
     );
@@ -1111,6 +1117,7 @@ describe("applySessionModelSelection", () => {
       modelOverride: "gpt-4o",
       modelOverrideSource: "user",
       modelOverrideRouteResolution: "resolved",
+      agentRuntimeOverride: "openclaw",
     });
     const result = await applySessionModelSelection(
       createParams({ sessionEntry, currentProvider: "openai", currentModel: "gpt-4o" }),

@@ -18,6 +18,7 @@ import { setTelegramRuntime } from "./runtime.js";
 
 describe("Telegram inbound admission authorization", () => {
   it("reauthorizes model callbacks against the current owner policy", async () => {
+    setTelegramRuntime(createPluginRuntimeMock());
     const senderId = "42";
     const chatId = 42;
     const cfg = {
