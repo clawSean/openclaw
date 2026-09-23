@@ -393,7 +393,7 @@ export function resolveCommandArgChoices(params: {
                 cfg,
                 catalog: toModelCatalogEntries(catalog ?? []),
                 defaultProvider: defaults.provider,
-                defaultModel: defaults,
+                defaultModel: defaults.model,
                 agentId: params.agentId,
               }).allowedCatalog
             : catalog;
