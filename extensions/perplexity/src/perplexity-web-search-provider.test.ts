@@ -34,6 +34,7 @@ function mockPerplexityResponseOnce(body: unknown): void {
 
 function agentResponse(content: string, citations: string[] = []) {
   return {
+    status: "completed",
     output: [
       { type: "search_results", results: citations.map((url) => ({ url })) },
       { type: "message", content: [{ type: "output_text", text: content }] },
@@ -314,7 +315,7 @@ describe("perplexity web search provider", () => {
   );
 
   it.each([
-    { name: "missing output", response: {} },
+    { name: "missing output", response: { status: "completed" } },
     { name: "whitespace content", response: agentResponse(" \n ") },
   ])("rejects and does not cache Agent API $name", async ({ name, response }) => {
     mockPerplexityResponseOnce(response);
@@ -333,6 +334,31 @@ describe("perplexity web search provider", () => {
     expect(recovered.citations).toEqual(["https://example.test/recovered"]);
     expect(withTrustedWebSearchEndpointMock).toHaveBeenCalledTimes(2);
   });
+
+  it.each(["failed", "incomplete", "in_progress", "queued", "cancelled", undefined])(
+    "rejects and does not cache Agent API status %s even when output text exists",
+    async (status) => {
+      mockPerplexityResponseOnce({
+        ...agentResponse("Do not accept this text"),
+        status,
+        ...(status === "failed" ? { error: { message: "agent execution failed" } } : {}),
+      });
+      mockPerplexityResponseOnce(agentResponse("Recovered grounded answer"));
+
+      const tool = createConfiguredPerplexityTool(false);
+      const args = { query: `perplexity Agent API status ${status ?? "missing"}` };
+      await expect(tool.execute(args)).rejects.toThrow(
+        status === "failed"
+          ? 'Perplexity Agent API returned status "failed": agent execution failed.'
+          : `Perplexity Agent API returned status ${JSON.stringify(status ?? "missing")}.`,
+      );
+
+      await expect(tool.execute(args)).resolves.toMatchObject({
+        content: expect.stringContaining("Recovered grounded answer"),
+      });
+      expect(withTrustedWebSearchEndpointMock).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("caps returned and cached results when the Perplexity Search API exceeds the requested count", async () => {
     mockPerplexityResponseOnce({
@@ -548,6 +574,16 @@ describe("perplexity web search provider", () => {
       transport: "agent_api",
     },
     {
+      name: "explicit Anthropic Agent API model",
+      key: directPerplexityApiKey,
+      source: "config",
+      overrides: { model: "anthropic/claude-sonnet-4-6" },
+      url: "https://api.perplexity.ai/v1/agent",
+      agentModel: "anthropic/claude-sonnet-4-6",
+      maxOutputTokens: 4096,
+      transport: "agent_api",
+    },
+    {
       name: "blank overrides",
       key: directPerplexityApiKey,
       source: "config",
@@ -631,6 +667,11 @@ describe("perplexity web search provider", () => {
                   model: entry.agentModel,
                   input: query,
                   tools: [{ type: "web_search" }],
+                  instructions:
+                    "You must use the web_search tool before answering. Answer only from source-grounded search results.",
+                  ...("maxOutputTokens" in entry
+                    ? { max_output_tokens: entry.maxOutputTokens }
+                    : {}),
                 }
             : transport === "chat_completions"
               ? { model: entry.model, messages: [{ role: "user", content: query }] }
