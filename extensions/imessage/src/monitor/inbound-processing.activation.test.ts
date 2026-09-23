@@ -1,14 +1,13 @@
+import {
+  createChannelAdmissionAudit,
+  createHostChannelIngressRuntime,
+} from "openclaw/plugin-sdk/channel-ingress-test-runtime";
+import { createPluginRuntimeMock } from "openclaw/plugin-sdk/channel-test-helpers";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { describe, expect, it, vi } from "vitest";
+import * as imessageRuntime from "../runtime.js";
 import { createIMessageGroupActivationResolver } from "./group-activation.js";
 import { resolveIMessageInboundDecision } from "./inbound-processing.js";
-
-const sessionStoreMocks = vi.hoisted(() => ({
-  getSessionEntry: vi.fn(),
-  resolveStorePath: vi.fn(() => "/tmp/openclaw-imessage-activation-test.sqlite"),
-}));
-
-vi.mock("openclaw/plugin-sdk/session-store-runtime", () => sessionStoreMocks);
 
 const SENDER = "+15550001111";
 const GROUP_ID = 99;
@@ -35,50 +34,84 @@ async function resolve(params: {
     agentId: string;
     sessionKey: string;
     cfg: OpenClawConfig;
-  }) => boolean | undefined;
+  }) => Promise<boolean | undefined>;
 }) {
-  return await resolveIMessageInboundDecision({
-    cfg: params.cfg,
-    accountId: "default",
-    message: {
-      id: 1,
-      chat_id: GROUP_ID,
-      sender: SENDER,
-      is_from_me: false,
-      text: params.text,
-      is_group: true,
-    },
-    resolveGroupActivation: params.resolveGroupActivation,
-    opts: {},
-    messageText: params.text,
-    bodyText: params.text,
-    allowFrom: ["*"],
-    groupAllowFrom: [],
-    groupPolicy: "open",
-    dmPolicy: "open",
-    storeAllowFrom: [],
-    historyLimit: 0,
-    groupHistories: new Map(),
-  });
+  type GatewayContext = NonNullable<
+    ReturnType<
+      NonNullable<Parameters<typeof createHostChannelIngressRuntime>[0]["resolveGatewayContext"]>
+    >
+  >;
+  const gateway = {
+    getRuntimeConfig: () => params.cfg,
+    channelAdmissionAudit: createChannelAdmissionAudit({ enabled: true }),
+  } as GatewayContext;
+  const owner = {
+    channelId: "imessage",
+    isLive: () => true,
+    resolveGatewayContext: () => gateway,
+  };
+  const runtime = createPluginRuntimeMock();
+  runtime.channel.inbound.ingress = createHostChannelIngressRuntime(owner);
+  const runtimeSpy = vi.spyOn(imessageRuntime, "getIMessageRuntime").mockReturnValue(runtime);
+  try {
+    return await resolveIMessageInboundDecision({
+      cfg: params.cfg,
+      accountId: "default",
+      message: {
+        id: 1,
+        chat_id: GROUP_ID,
+        sender: SENDER,
+        is_from_me: false,
+        text: params.text,
+        is_group: true,
+      },
+      resolveGroupActivation: params.resolveGroupActivation,
+      opts: {},
+      messageText: params.text,
+      bodyText: params.text,
+      allowFrom: ["*"],
+      groupAllowFrom: [],
+      groupPolicy: "open",
+      dmPolicy: "open",
+      storeAllowFrom: [],
+      historyLimit: 0,
+      groupHistories: new Map(),
+    });
+  } finally {
+    runtimeSpy.mockRestore();
+  }
 }
 
 describe("iMessage session activation gating", () => {
   it("loads persisted group activation from the routed session", async () => {
     const cfg = createConfig(false);
     const sessionKey = "agent:main:imessage:group:99";
-    sessionStoreMocks.getSessionEntry.mockReturnValue({ groupActivation: "mention" });
+    const runtime = createPluginRuntimeMock();
+    const getSessionEntryInWorker = vi.fn().mockResolvedValue({ groupActivation: "mention" });
+    runtime.agent.session.resolveStorePath = vi.fn(
+      () => "/tmp/openclaw-imessage-activation-test.sqlite",
+    );
+    runtime.agent.session.getSessionEntryInWorker = getSessionEntryInWorker;
+    const runtimeSpy = vi.spyOn(imessageRuntime, "getIMessageRuntime").mockReturnValue(runtime);
     const resolveGroupActivation = createIMessageGroupActivationResolver(vi.fn());
 
-    expect(resolveGroupActivation({ agentId: "main", sessionKey, cfg })).toBe(true);
-    expect(sessionStoreMocks.getSessionEntry).toHaveBeenCalledWith({
-      storePath: "/tmp/openclaw-imessage-activation-test.sqlite",
-      sessionKey,
-    });
+    try {
+      await expect(resolveGroupActivation({ agentId: "main", sessionKey, cfg })).resolves.toBe(
+        true,
+      );
+      expect(getSessionEntryInWorker).toHaveBeenCalledWith({
+        agentId: "main",
+        storePath: "/tmp/openclaw-imessage-activation-test.sqlite",
+        sessionKey,
+      });
+    } finally {
+      runtimeSpy.mockRestore();
+    }
   });
 
   it("lets session mention activation override always-on group config", async () => {
     const cfg = createConfig(false);
-    const resolveGroupActivation = vi.fn(() => true);
+    const resolveGroupActivation = vi.fn(async () => true);
 
     const decision = await resolve({ cfg, text: "hello group", resolveGroupActivation });
 
@@ -94,7 +127,7 @@ describe("iMessage session activation gating", () => {
     const decision = await resolve({
       cfg: createConfig(true),
       text: "hello group",
-      resolveGroupActivation: () => false,
+      resolveGroupActivation: async () => false,
     });
 
     expect(decision.kind).toBe("dispatch");
@@ -104,7 +137,7 @@ describe("iMessage session activation gating", () => {
     const decision = await resolve({
       cfg: createConfig(true),
       text: "/activation always",
-      resolveGroupActivation: () => true,
+      resolveGroupActivation: async () => true,
     });
 
     expect(decision.kind).toBe("dispatch");

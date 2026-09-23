@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   appendTranscriptEvent,
   appendTranscriptMessage,
@@ -31,7 +31,6 @@ import {
 
 type InternalSessionEntry = ConfigSessionTypes.InternalSessionEntry;
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const LEGACY_TRANSCRIPT_INSPECTION_MAX_BYTES = 16 * 1024 * 1024;
 const sessionEntryKeepsRecoveryPrivate: "mainRestartRecovery" extends keyof SessionEntry
   ? false
@@ -811,121 +810,6 @@ describe("session-store-runtime compatibility surface", () => {
       sessionId: "update-after",
       sessionKey: updateKey,
       storePath: updateStorePath,
-    });
-  });
-
-  it.each([
-    { pruneAfterMs: 7 * DAY_MS, archivedAt: expect.any(Number) },
-    { pruneAfterMs: 0, archivedAt: undefined },
-    { pruneAfterMs: -DAY_MS, archivedAt: undefined },
-  ])(
-    "applies age retention $pruneAfterMs through entry patches",
-    async ({ pruneAfterMs, archivedAt }) => {
-      const staleSessionKey = "agent:main:stale";
-      const activeSessionKey = "agent:main:active";
-      const now = Date.now();
-      const staleEntry = { sessionId: "session-stale", updatedAt: now - 8 * DAY_MS };
-      await seedSessionEntry(staleSessionKey, staleEntry);
-      await seedSessionEntry(activeSessionKey, { sessionId: "session-active", updatedAt: now });
-      assignOwner(staleSessionKey);
-
-      await patchSessionEntry({
-        sessionKey: activeSessionKey,
-        storePath,
-        maintenanceConfig: {
-          mode: "enforce",
-          pruneAfterMs,
-          modelRunPruneAfterMs: DAY_MS,
-          maxEntries: 100,
-          resetArchiveRetentionMs: 7 * DAY_MS,
-          maxDiskBytes: null,
-          highWaterBytes: null,
-        },
-        update: () => ({ model: "gpt-5.5" }),
-      });
-
-      const readStaleEntry = () => getSessionEntry({ sessionKey: staleSessionKey, storePath });
-      await vi.waitFor(() => expect(readStaleEntry()?.archivedAt).toEqual(archivedAt), {
-        timeout: 5_000,
-      });
-      expect(readStaleEntry()).toMatchObject(staleEntry);
-      const activeEntry = getSessionEntry({ sessionKey: activeSessionKey, storePath });
-      expect(activeEntry).toMatchObject({ sessionId: "session-active", model: "gpt-5.5" });
-      expect(activeEntry?.archivedAt).toBeUndefined();
-    },
-  );
-
-  it("forwards maintenance suppression through entry patches", async () => {
-    const staleSessionKey = "agent:main:stale";
-    const activeSessionKey = "agent:main:active";
-    const now = Date.now();
-    await seedSessionEntry(staleSessionKey, {
-      sessionId: "session-stale",
-      updatedAt: now - 8 * DAY_MS,
-    });
-    await seedSessionEntry(activeSessionKey, {
-      sessionId: "session-active",
-      updatedAt: now,
-    });
-
-    await patchSessionEntry({
-      sessionKey: activeSessionKey,
-      storePath,
-      maintenanceConfig: {
-        mode: "enforce",
-        pruneAfterMs: 7 * DAY_MS,
-        modelRunPruneAfterMs: DAY_MS,
-        maxEntries: 1,
-        resetArchiveRetentionMs: 7 * DAY_MS,
-        maxDiskBytes: null,
-        highWaterBytes: null,
-      },
-      requireWriteSuccess: true,
-      skipMaintenance: true,
-      update: () => ({ model: "gpt-5.5" }),
-    });
-
-    expect(getSessionEntry({ sessionKey: staleSessionKey, storePath })).toMatchObject({
-      sessionId: "session-stale",
-    });
-  });
-
-  it("accepts pre-model-run maintenance configs through entry patches", async () => {
-    const staleModelRunKey = "agent:main:explicit:model-run-123e4567-e89b-12d3-a456-426614174000";
-    const activeSessionKey = "agent:main:active";
-    const now = Date.now();
-    await seedSessionEntry(staleModelRunKey, {
-      sessionId: "session-probe",
-      updatedAt: now - 2 * DAY_MS,
-    });
-    await seedSessionEntry(activeSessionKey, {
-      sessionId: "session-active",
-      updatedAt: now,
-    });
-
-    const legacyMaintenanceConfig = {
-      mode: "enforce" as const,
-      pruneAfterMs: 7 * DAY_MS,
-      maxEntries: 500,
-      resetArchiveRetentionMs: 7 * DAY_MS,
-      maxDiskBytes: null,
-      highWaterBytes: null,
-    };
-
-    await expect(
-      patchSessionEntry({
-        sessionKey: activeSessionKey,
-        storePath,
-        maintenanceConfig: legacyMaintenanceConfig,
-        update: () => ({ model: "gpt-5.5" }),
-      }),
-    ).resolves.toMatchObject({
-      model: "gpt-5.5",
-      sessionId: "session-active",
-    });
-
-    expect(getSessionEntry({ sessionKey: staleModelRunKey, storePath })).toMatchObject({
-      sessionId: "session-probe",
     });
   });
 

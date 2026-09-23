@@ -1,13 +1,22 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { normalizeGroupActivation } from "openclaw/plugin-sdk/group-activation";
-import { getSessionEntry, resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
+import { getIMessageRuntime } from "../runtime.js";
 
 export function createIMessageGroupActivationResolver(logVerbose: (message: string) => void) {
-  return (params: { agentId: string; sessionKey: string; cfg: OpenClawConfig }) => {
-    const storePath = resolveStorePath(params.cfg.session?.store, { agentId: params.agentId });
+  return async (params: { agentId: string; sessionKey: string; cfg: OpenClawConfig }) => {
+    const session = getIMessageRuntime().agent.session;
+    const storePath = session.resolveStorePath(params.cfg.session?.store, {
+      agentId: params.agentId,
+    });
     try {
       const activation = normalizeGroupActivation(
-        getSessionEntry({ storePath, sessionKey: params.sessionKey })?.groupActivation,
+        (
+          await session.getSessionEntryInWorker({
+            agentId: params.agentId,
+            storePath,
+            sessionKey: params.sessionKey,
+          })
+        )?.groupActivation,
       );
       if (activation === "always") {
         return false;

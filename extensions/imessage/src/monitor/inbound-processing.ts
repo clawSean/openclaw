@@ -35,6 +35,7 @@ import type { ConfiguredBindingRouteResult } from "openclaw/plugin-sdk/conversat
 import { createChannelHistoryWindow, type HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import type { FinalizedMsgContext } from "openclaw/plugin-sdk/reply-runtime";
 import { resolveAgentRoute } from "openclaw/plugin-sdk/routing";
+import { uniqueStrings } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { sanitizeTerminalText } from "openclaw/plugin-sdk/text-chunking";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { resolveIMessageDirectChatService } from "../chat-context.js";
@@ -371,7 +372,7 @@ export async function resolveIMessageInboundDecision(params: {
     agentId: string;
     sessionKey: string;
     cfg: OpenClawConfig;
-  }) => boolean | undefined;
+  }) => Promise<boolean | undefined>;
   echoCache?: {
     has: (
       scope: string,
@@ -762,7 +763,7 @@ export async function resolveIMessageInboundDecision(params: {
     overrideOrder: "before-config",
   });
   const activationOverride = isGroup
-    ? params.resolveGroupActivation?.({
+    ? await params.resolveGroupActivation?.({
         agentId: route.agentId,
         sessionKey: route.sessionKey,
         cfg: params.cfg,
