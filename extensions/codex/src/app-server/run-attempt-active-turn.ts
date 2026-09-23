@@ -32,8 +32,9 @@ import type { CodexAttemptLifecycleController } from "./run-attempt-lifecycle-co
 import type { CodexAttemptNotificationController } from "./run-attempt-notification-controller.js";
 import type { CodexAttemptResources } from "./run-attempt-resources.js";
 import {
-  assertCodexTerminalReleaseInputAuthority,
+  assertCodexSteeringAdmission,
   isCodexMessageInjectionAvailable,
+  queueCodexTerminalReleaseInput,
   type CodexInputAuthority,
 } from "./run-attempt-server-request-admission.js";
 import type { CodexStartedTurn } from "./run-attempt-turn-request.js";
@@ -345,13 +346,8 @@ export function activateCodexAttemptTurn(
       state.activeLocalProjections -= 1;
     }
   };
-  const assertSteeringActive = () => {
-    connection.assertCurrent();
-    runAbortController.signal.throwIfAborted();
-    if (state.completed || state.terminalTurnNotificationQueued || state.finalSourceReplyCommit) {
-      throw new Error("codex app-server turn is no longer accepting steering");
-    }
-  };
+  const assertSteeringActive = () =>
+    assertCodexSteeringAdmission(connection, runAbortController.signal, state);
   const workspaceOnly = resolveAttemptFsWorkspaceOnly({ config: params.config, sessionAgentId });
   const imageContext = {
     workspaceDir: connection.effectiveWorkspace,
@@ -517,20 +513,16 @@ export function activateCodexAttemptTurn(
     authorityKind: CodexInputAuthority["kind"] = assertCurrent ? "source-bound" : "run",
   ) => {
     const canClaim = injectionGuard(assertCurrent);
-    const isInboundUserMessage = optionsLocal?.isInboundUserMessage === true;
     if (state.finalSourceReplyCommit) {
-      if (isInboundUserMessage) {
-        assertCodexTerminalReleaseInputAuthority({
-          assertCurrent,
-          assertConnectionCurrent: () => connection.assertCurrent(),
-          signal: runAbortController.signal,
-          state,
-        });
-        lifecycle.interruptTurnForTerminalRelease("new_inbound_message");
-      }
-      // Final delivery sealed this queue. Let the canonical rejection path tell
-      // the gateway to admit the message on a fresh turn instead of losing it.
-      return await activeSteeringQueue.queue(text, optionsLocal, injectionGuard(assertCurrent));
+      return await queueCodexTerminalReleaseInput(
+        optionsLocal?.isInboundUserMessage === true,
+        assertCurrent,
+        () => connection.assertCurrent(),
+        runAbortController.signal,
+        state,
+        () => lifecycle.interruptTurnForTerminalRelease("new_inbound_message"),
+        () => activeSteeringQueue.queue(text, optionsLocal, injectionGuard(assertCurrent)),
+      );
     }
     if (await claimPendingUserInputAnswer(text, optionsLocal, assertCurrent, authorityKind)) {
       // A question claim is already consumption. Closing the run during its
@@ -538,7 +530,7 @@ export function activateCodexAttemptTurn(
       optionsLocal?.onQueueAccepted?.(true);
       return undefined;
     }
-    if (isInboundUserMessage && hasPromptImageInput(optionsLocal)) {
+    if (optionsLocal?.isInboundUserMessage === true && hasPromptImageInput(optionsLocal)) {
       assertSteeringActive();
       try {
         await cancelPendingUserInput("image-reply", assertCurrent, authorityKind);

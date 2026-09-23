@@ -16,6 +16,22 @@ export function isCodexMessageInjectionAvailable(
   return !state.completed && !state.terminalTurnNotificationQueued && !signal.aborted;
 }
 
+export function assertCodexSteeringAdmission(
+  connection: { assertCurrent: () => void },
+  signal: AbortSignal,
+  state: {
+    completed: boolean;
+    terminalTurnNotificationQueued: boolean;
+    finalSourceReplyCommit?: unknown;
+  },
+) {
+  connection.assertCurrent();
+  signal.throwIfAborted();
+  if (state.completed || state.terminalTurnNotificationQueued || state.finalSourceReplyCommit) {
+    throw new Error("codex app-server turn is no longer accepting steering");
+  }
+}
+
 type AdmissionEntry = {
   controller: AbortController;
   preserveOnSeal: boolean;
@@ -44,6 +60,27 @@ export function assertCodexTerminalReleaseInputAuthority(params: {
   ) {
     throw new Error("codex app-server terminal-release grace is no longer active");
   }
+}
+
+export async function queueCodexTerminalReleaseInput<T>(
+  isInboundUserMessage: boolean,
+  assertCurrent: (() => void) | undefined,
+  assertConnectionCurrent: () => void,
+  signal: AbortSignal,
+  state: Parameters<typeof assertCodexTerminalReleaseInputAuthority>[0]["state"],
+  interrupt: () => void,
+  queue: () => Promise<T>,
+): Promise<T> {
+  if (isInboundUserMessage) {
+    assertCodexTerminalReleaseInputAuthority({
+      assertCurrent,
+      assertConnectionCurrent,
+      signal,
+      state,
+    });
+    interrupt();
+  }
+  return await queue();
 }
 
 /** Owns admission and cancellation for every server request in one Codex turn. */

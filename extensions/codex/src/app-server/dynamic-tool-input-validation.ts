@@ -4,7 +4,6 @@ import {
   validateJsonSchemaValue,
 } from "openclaw/plugin-sdk/json-schema-runtime";
 
-const INTERNAL_TOOL_EXECUTION_VALIDATION = Symbol.for("openclaw.internalToolExecutionValidation");
 const MAX_VALIDATION_ERRORS = 4;
 const MAX_VALIDATION_ERROR_CHARS = 160;
 const VALIDATION_TRUNCATED_SUFFIX = " [detail truncated]";
@@ -41,15 +40,4 @@ export function assertCodexDynamicToolInputMatchesSchema(params: {
   const omitted = validation.errors.length - visibleErrors.length;
   const omittedSuffix = omitted > 0 ? `; ${omitted} more violation(s) omitted` : "";
   throw new Error(`Invalid arguments for tool "${params.toolName}": ${details}${omittedSuffix}.`);
-}
-
-export function createCodexDynamicToolValidationControl(params: {
-  toolCallId: string;
-  validate: (value: unknown) => void;
-}): Record<PropertyKey, unknown> {
-  return {
-    [INTERNAL_TOOL_EXECUTION_VALIDATION]: true,
-    toolCallId: params.toolCallId,
-    validate: params.validate,
-  };
 }

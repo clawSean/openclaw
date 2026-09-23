@@ -315,22 +315,54 @@ async function executeDynamicToolCallWithTimeout(
       abortPromise.then((response) => ({ kind: "fallback" as const, response })),
       timeoutPromise.then((response) => ({ kind: "fallback" as const, response })),
     ]);
-    if (initialOutcome.kind === "error") {
+    const fallbackTriggered = timedOut || params.signal.aborted;
+    if (
+      initialOutcome.kind === "error" &&
+      !(shouldReconcileFinalSourceReply && fallbackTriggered)
+    ) {
       throw initialOutcome.error;
     }
-    let response = initialOutcome.response;
+    let response =
+      initialOutcome.kind === "error"
+        ? createFailedAfterPossibleDispatch(
+            formatToolExecutionErrorMessage(
+              initialOutcome.error,
+              "OpenClaw dynamic tool call failed.",
+            ),
+            params.signal.aborted
+              ? resolveCodexToolAbortTerminalReason(params.signal)
+              : timedOut
+                ? "timed_out"
+                : "failed",
+          )
+        : initialOutcome.response;
     if (
-      initialOutcome.kind === "fallback" &&
       shouldReconcileFinalSourceReply &&
+      fallbackTriggered &&
+      !(response.success && response.finalCurrentSourceReply === true) &&
       !finalSourceReplyDelivered
     ) {
       // A transport may finish just after its cancellation signal. Keep the
       // existing finalization grace as the bounded authority window so a raw
       // delivery receipt wins before failure is published to either observer.
       let reconciliationTimer: ReturnType<typeof setTimeout> | undefined;
+      const confirmedFinalToolOutcome = new Promise<{
+        kind: "tool";
+        response: CodexDynamicToolRuntimeResponse;
+      }>((resolve) => {
+        void toolCallOutcome.then((outcome) => {
+          if (
+            outcome.kind === "tool" &&
+            outcome.response.success &&
+            outcome.response.finalCurrentSourceReply === true
+          ) {
+            resolve(outcome);
+          }
+        });
+      });
       const reconciliation = await Promise.race([
         finalSourceReplyDelivery.then(() => ({ kind: "delivery" as const })),
-        toolCallOutcome,
+        confirmedFinalToolOutcome,
         new Promise<{ kind: "grace" }>((resolve) => {
           reconciliationTimer = setTimeout(
             () => resolve({ kind: "grace" }),

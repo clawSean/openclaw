@@ -295,6 +295,51 @@ describe("dynamic tool owner timeout", () => {
     );
   });
 
+  it("keeps waiting when cancellation settles the tool before its delivery receipt", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const onFinalSourceReplyDelivery = vi.fn();
+    let reportFinalSourceReplyDelivery: (() => void) | undefined;
+    const response = handleDynamicToolCallWithTimeout({
+      call: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        callId: "call-final-source-after-cancelled-tool",
+        namespace: null,
+        tool: "message",
+        arguments: { action: "send", message: "done", final: true },
+      },
+      toolBridge: {
+        handleToolCall: vi.fn((_call, options) => {
+          reportFinalSourceReplyDelivery = options?.onFinalSourceReplyDelivery;
+          return new Promise<{ success: false; contentItems: never[] }>((resolve) => {
+            options?.signal?.addEventListener(
+              "abort",
+              () => resolve({ success: false, contentItems: [] }),
+              { once: true },
+            );
+          });
+        }),
+      },
+      signal: controller.signal,
+      timeoutMs: 60_000,
+      onFinalSourceReplyDelivery,
+    });
+    const settled = vi.fn();
+    void response.then(settled);
+
+    controller.abort("caller cancelled before delivery");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).not.toHaveBeenCalled();
+    reportFinalSourceReplyDelivery?.();
+
+    await expect(response).resolves.toMatchObject({
+      success: true,
+      finalCurrentSourceReply: true,
+    });
+    expect(onFinalSourceReplyDelivery).toHaveBeenCalledOnce();
+  });
+
   it("closes late final-source authority after bounded cancellation reconciliation", async () => {
     vi.useFakeTimers();
     const controller = new AbortController();
