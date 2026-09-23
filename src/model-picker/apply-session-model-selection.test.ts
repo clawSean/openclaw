@@ -12,11 +12,11 @@ import {
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { ModelDefinitionConfig } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { projectSessionsPatchEntry } from "../gateway/sessions-patch.js";
 import {
   onSessionLifecycleEvent,
   type SessionLifecycleEvent,
 } from "../sessions/session-lifecycle-events.js";
+import { registerModelSelectionRuntimeCases } from "./apply-session-model-selection.runtime-cases.test-support.js";
 import { createModelSelectionInputs } from "./apply-session-model-selection.test-support.js";
 
 // Runtime eligibility belongs to the published-owner tests; these cases exercise its consumers.
@@ -652,90 +652,12 @@ describe("applySessionModelSelection", () => {
     },
   );
 
-  it.each([undefined, "codex"])(
-    "clears inherited but rejects explicit Gateway runtime %s",
-    async (agentRuntime) => {
-      const sessionEntry = createEntry({
-        providerOverride: "openai",
-        modelOverride: "gpt-4o",
-        agentRuntimeOverride: "codex",
-        nativeRuntimeConsent: "codex",
-      });
-      const { cfg, sessionKey } = createParams({ sessionEntry });
-      const initial = structuredClone(sessionEntry);
-      const result = await projectSessionsPatchEntry({
-        cfg,
-        storeKey: sessionKey,
-        existingEntry: sessionEntry,
-        isLabelInUse: () => false,
-        patch: {
-          key: sessionKey,
-          model: "anthropic/claude-opus-4-6",
-          ...(agentRuntime ? { agentRuntime } : {}),
-        },
-        loadGatewayModelCatalogSnapshot: async () => ({ entries: catalog, routeVariants: catalog }),
-      });
-      if (agentRuntime) {
-        expect(result).toMatchObject({
-          ok: false,
-          error: { message: expect.stringContaining('Runtime "codex" is not supported') },
-        });
-      } else {
-        expect(result.ok).toBe(true);
-        if (!result.ok) {
-          throw new Error("Model switch failed");
-        }
-        expect(result.entry.agentRuntimeOverride).toBeUndefined();
-        expect(result.entry.nativeRuntimeConsent).toBeUndefined();
-        expect(result.entry).toMatchObject({
-          providerOverride: "anthropic",
-          modelOverride: "claude-opus-4-6",
-        });
-      }
-      expect(sessionEntry).toEqual(initial);
-    },
-  );
-
-  it.each([undefined, "openclaw", "claude-cli"])(
-    "persists SDK model-only selection with inherited runtime %s",
-    async (agentRuntimeOverride) => {
-      const tempRoot = tempDirs.make("openclaw-model-picker-runtime-");
-      const storePath = path.join(tempRoot, "sessions.json");
-      const sessionKey = "agent:main:dm:runtime-compat";
-      const sessionEntry = createEntry({
-        providerOverride: "anthropic",
-        modelOverride: "claude-opus-4-6",
-        ...(agentRuntimeOverride
-          ? { agentRuntimeOverride, nativeRuntimeConsent: agentRuntimeOverride }
-          : {}),
-      });
-      await replaceSessionEntry({ sessionKey, storePath }, sessionEntry);
-      const result = await applySessionModelSelection(
-        createParams({
-          cfg: {
-            agents: {
-              defaults: { models: { "openai/gpt-4o": { agentRuntime: { id: "openclaw" } } } },
-            },
-          },
-          sessionEntry,
-          sessionKey,
-          storePath,
-        }),
-      );
-      expect(result).toMatchObject({
-        status: "applied",
-        provider: "openai",
-        model: "gpt-4o",
-        agentRuntime: "openclaw",
-      });
-      const stored = loadSessionEntryReadOnly({ sessionKey, storePath });
-      expect(stored).toMatchObject({ providerOverride: "openai", modelOverride: "gpt-4o" });
-      const compatible = agentRuntimeOverride === "openclaw";
-      expect(stored?.agentRuntimeOverride).toBe(compatible ? "openclaw" : undefined);
-      expect(stored?.nativeRuntimeConsent).toBe(compatible ? "openclaw" : undefined);
-      expect(effects.mutateConfigFileWithRetry).not.toHaveBeenCalled();
-    },
-  );
+  registerModelSelectionRuntimeCases({
+    applySessionModelSelection,
+    effects,
+    inputs: { catalog, createEntry, createParams },
+    tempDirs,
+  });
 
   it("rejects an incompatible runtime without mutation or side effects", async () => {
     const sessionEntry = createEntry();

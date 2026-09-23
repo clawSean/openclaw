@@ -3,6 +3,7 @@ import { normalizeOptionalLowercaseString } from "../../packages/normalization-c
 import { normalizeStringEntries } from "../../packages/normalization-core/src/string-normalization.js";
 import { formatFastModeAutoLabel, resolveFastModeModelAutoOnSeconds } from "../shared/fast-mode.js";
 import { COMMAND_ARG_FORMATTERS } from "./commands-args.js";
+import { listModelSwitchChoices } from "./commands-registry.model-switch.js";
 import type {
   ChatCommandDefinition,
   CommandArgChoiceContext,
@@ -29,27 +30,6 @@ const BROWSER_SAFE_THINKING_LEVELS: ThinkLevel[] = [
   "adaptive",
   "max",
 ];
-
-function listModelSwitchChoices(
-  catalog?: CommandArgChoiceContext["catalog"],
-): Array<{ value: string; label: string }> {
-  if (!catalog?.length) {
-    return [];
-  }
-  const choices = new Map<string, { value: string; label: string }>();
-  for (const entry of catalog) {
-    const provider = entry.provider.trim();
-    const model = entry.id.trim();
-    if (!provider || !model) {
-      continue;
-    }
-    const value = `${provider}/${model}`;
-    const displayName = entry.name?.trim();
-    const label = displayName && displayName !== model ? `${provider}/${displayName}` : value;
-    choices.set(value, { value, label });
-  }
-  return [...choices.values()].toSorted((left, right) => left.label.localeCompare(right.label));
-}
 
 /**
  * Keep simple model selections on fast client-side patch paths. Semantic reset
