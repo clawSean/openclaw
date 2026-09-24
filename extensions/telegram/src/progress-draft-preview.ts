@@ -2,6 +2,7 @@ import {
   compactChannelProgressDraftLine,
   formatChannelProgressDraftDiffStat,
   isChannelProgressAttentionLine,
+  resolveChannelProgressDraftConfig,
   resolveChannelProgressDraftMaxLineChars,
   resolveChannelProgressDraftMaxLines,
   resolveChannelStreamingPreviewToolProgress,
@@ -86,7 +87,13 @@ function progressLineText(
 
 export function renderTelegramProgressDraftPreview(
   snapshot: ChannelProgressDraftCompositorSnapshot,
-  options: { richMessages: boolean; maxLines: number; maxLineChars: number; toolProgress: boolean },
+  options: {
+    richMessages: boolean;
+    maxLines: number;
+    maxLineChars: number;
+    commandMaxLineChars?: number;
+    toolProgress: boolean;
+  },
 ): TelegramDraftPreview {
   const { maxLines, maxLineChars } = options;
   const activity =
@@ -140,7 +147,14 @@ export function renderTelegramProgressDraftPreview(
   if (visibleLines.length) {
     addParagraph(
       joinProgressText(
-        visibleLines.map((line) => progressLineText(line, maxLineChars)),
+        visibleLines.map((line) =>
+          progressLineText(
+            line,
+            typeof line !== "string" && line.commandBearing
+              ? (options.commandMaxLineChars ?? maxLineChars)
+              : maxLineChars,
+          ),
+        ),
         "\n",
       ),
     );
@@ -200,5 +214,6 @@ export function renderTelegramAccountProgressDraftPreview(
     ),
     maxLines: resolveChannelProgressDraftMaxLines(accountConfig),
     maxLineChars: resolveChannelProgressDraftMaxLineChars(accountConfig),
+    commandMaxLineChars: resolveChannelProgressDraftConfig(accountConfig).commandMaxLineChars,
   });
 }

@@ -4,6 +4,7 @@ import {
   createChannelProgressWorkCounter,
   createDraftStreamLoop,
   createLivePreviewLifecycle,
+  resolveChannelProgressDraftConfig,
   resolveChannelProgressDraftMaxLineChars,
   resolveChannelStreamingPreviewToolProgress,
   resolveChannelStreamingSuppressDefaultToolProgressMessages,
@@ -33,6 +34,7 @@ import {
 import { createSlackNativeProgressTransport } from "./dispatch-progress-native.js";
 import {
   combineProgressHeadlineAndExplanation,
+  isSlackProgressTextRenderedAsTitle,
   resolveNativeProgressLines,
   resolveNativeProgressNarration,
 } from "./dispatch-progress-render.js";
@@ -142,6 +144,7 @@ export function createSlackProgressRuntime(runtimeParams: {
     Boolean(draftStream) && isProgressMode && slackProgressStyle === "card";
   const explicitProgressTitle = resolveExplicitSlackProgressTitle(account.config);
   const progressDraftMaxLineChars = resolveChannelProgressDraftMaxLineChars(account.config);
+  const commandMaxLineChars = resolveChannelProgressDraftConfig(account.config).commandMaxLineChars;
   const progressCard = createSlackDraftProgressCardRuntime({
     setup: { account, cfg, ctx, prepared, slackClient },
     draftStream,
@@ -150,6 +153,7 @@ export function createSlackProgressRuntime(runtimeParams: {
     progressWorkCounter: previewToolProgressEnabled ? progressWorkCounter : undefined,
     explicitTitle: explicitProgressTitle,
     maxLineChars: progressDraftMaxLineChars,
+    commandMaxLineChars,
     getSnapshot: () => progressDraft.getSnapshot(),
     getThreadTs: () => delivery.usedReplyThreadTs,
   });
@@ -200,25 +204,6 @@ export function createSlackProgressRuntime(runtimeParams: {
       snapshot.planExplanation,
     );
 
-  const normalizeProgressText = (text: string | undefined) =>
-    text?.replace(/\s+/gu, " ").trim() ?? "";
-
-  const isRenderedAsProgressTitle = (text: string | undefined): boolean => {
-    const candidate = normalizeProgressText(text);
-    if (!candidate) {
-      return false;
-    }
-    const snapshot = progressDraft.getSnapshot();
-    const title = normalizeProgressText(
-      combineProgressHeadlineAndExplanation(
-        explicitProgressTitle ??
-          (snapshot.statusHeadlineFormat === "plain" ? undefined : snapshot.statusHeadline),
-        snapshot.planExplanationFormat === "plain" ? undefined : snapshot.planExplanation,
-      ),
-    );
-    return title.length > 0 && title.includes(candidate);
-  };
-
   const resolveNarrationUpdate = (incoming: string | undefined) => {
     const next = applyAppendOnlyStreamUpdate({
       incoming: incoming ?? "",
@@ -248,6 +233,7 @@ export function createSlackProgressRuntime(runtimeParams: {
         lines: resolveNativeProgressLines(snapshot),
         plan: snapshot.plan,
         maxLineChars: progressDraftMaxLineChars,
+        commandMaxLineChars,
         summaryRow: !previewToolProgressEnabled,
       }),
     });
@@ -318,7 +304,13 @@ export function createSlackProgressRuntime(runtimeParams: {
       // The same preamble reaches us as a reply payload and as the compositor
       // headline behind the card title. The card updates it in place, so
       // streaming it as text too would print the line twice.
-      if (isRenderedAsProgressTitle(payload.text)) {
+      if (
+        isSlackProgressTextRenderedAsTitle({
+          text: payload.text,
+          explicitTitle: explicitProgressTitle,
+          snapshot: progressDraft.getSnapshot(),
+        })
+      ) {
         return { visibleReplySent: false };
       }
       const narrationUpdate = resolveNarrationUpdate(payload.text?.trimEnd());
@@ -524,6 +516,7 @@ export function createSlackProgressRuntime(runtimeParams: {
         lines,
         plan: snapshot.plan,
         maxLineChars: progressDraftMaxLineChars,
+        commandMaxLineChars,
         summaryRow: !previewToolProgressEnabled,
         finalInProgressStatus,
         diffStat: snapshot.diffStat,

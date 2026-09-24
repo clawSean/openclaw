@@ -27,10 +27,15 @@ describe("channel config UI hint helpers", () => {
       "streaming.progress.labels",
       "streaming.progress.maxLines",
       "streaming.progress.maxLineChars",
+      "streaming.progress.commandMaxLineChars",
       "streaming.progress.toolProgress",
       "streaming.progress.commandText",
     ]);
     expect(hints["streaming.progress.label"]?.label).toBe("Example Progress Label");
+    expect(hints["streaming.progress.commandMaxLineChars"]).toEqual({
+      label: "Example Progress Command Max Line Chars",
+      help: "Positive integer maximum for displayed command/exec detail. When unset, inherits streaming.progress.maxLineChars. This is only a display bound, not a privacy or redaction control.",
+    });
   });
 
   it("builds the shared streaming hint group", () => {

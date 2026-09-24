@@ -133,6 +133,10 @@ function createChannelProgressUiHints(params: {
       label: `${channelLabel} Progress Max Line Chars`,
       help: "Maximum characters per compact progress line before truncation (default: 120). Prose cuts at word boundaries; commands and paths keep useful suffixes.",
     },
+    "streaming.progress.commandMaxLineChars": {
+      label: `${channelLabel} Progress Command Max Line Chars`,
+      help: "Positive integer maximum for displayed command/exec detail. When unset, inherits streaming.progress.maxLineChars. This is only a display bound, not a privacy or redaction control.",
+    },
     "streaming.progress.toolProgress": {
       label: `${channelLabel} Progress Tool Lines`,
       help: "Show individual tool activity, including intermediate failures, in progress drafts (default: false). Quiet drafts retain plans, approval requests, and authored progress text. Terminal task errors remain visible.",

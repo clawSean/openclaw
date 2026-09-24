@@ -133,6 +133,24 @@ describe("buildSlackProgressCardBlocks", () => {
     expect(lines.every((line) => Array.from(line).length <= 20)).toBe(true);
   });
 
+  it("limits command activity independently from prose", () => {
+    const detail = "abcdefghijklmnopqrstuvwxyz";
+    const blocks = buildSlackProgressCardBlocks({
+      detailed: true,
+      state: "working",
+      title: "Working",
+      maxLineChars: 80,
+      commandMaxLineChars: 12,
+      lines: [
+        { kind: "tool", label: "Bash", text: detail, detail, commandBearing: true },
+        { kind: "item", label: "Update", text: detail, detail },
+      ],
+    });
+    const text = JSON.stringify(blocks);
+    expect(text).toContain("abcde…uvwxyz");
+    expect(text).toContain(detail);
+  });
+
   it("retains independent approvals and failures in the card attention section", () => {
     const blocks = buildSlackProgressCardBlocks({
       detailed: true,

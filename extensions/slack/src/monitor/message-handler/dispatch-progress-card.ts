@@ -33,6 +33,7 @@ export function createSlackDraftProgressCardRuntime(params: {
   progressWorkCounter: ReturnType<typeof createChannelProgressWorkCounter> | undefined;
   explicitTitle: string | undefined;
   maxLineChars: number;
+  commandMaxLineChars?: number;
   getSnapshot: () => ChannelProgressDraftCompositorSnapshot;
   getThreadTs: () => string | undefined;
 }) {
@@ -97,6 +98,7 @@ export function createSlackDraftProgressCardRuntime(params: {
       plan: snapshot.plan,
       lines: resolveStructuredProgressLines(snapshot.lines),
       maxLineChars: params.maxLineChars,
+      commandMaxLineChars: params.commandMaxLineChars,
       diffStat: snapshot.diffStat,
       toolCalls: params.progressWorkCounter?.toolCalls,
       elapsedSeconds: params.progressWorkCounter?.elapsedSeconds,

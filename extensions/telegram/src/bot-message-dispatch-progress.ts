@@ -2,6 +2,7 @@ import {
   createChannelProgressDraftCompositor,
   createLivePreviewLifecycle,
   createPreviewMessageReceipt,
+  resolveChannelProgressDraftConfig,
   resolveChannelProgressDraftMaxLineChars,
   resolveChannelProgressDraftMaxLines,
   type ChannelProgressDraftLine,
@@ -108,6 +109,8 @@ export function createProgressState(
           richMessages: config.richMessages,
           maxLines: resolveChannelProgressDraftMaxLines(config.telegramCfg),
           maxLineChars: resolveChannelProgressDraftMaxLineChars(config.telegramCfg),
+          commandMaxLineChars: resolveChannelProgressDraftConfig(config.telegramCfg)
+            .commandMaxLineChars,
         }),
       );
       if (options.flush) {

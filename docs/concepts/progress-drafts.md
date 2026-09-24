@@ -268,12 +268,21 @@ the tool-progress status:
         progress: {
           toolProgress: true,
           commandText: "raw",
+          maxLineChars: 400,
+          commandMaxLineChars: 100,
         },
       },
     },
   },
 }
 ```
+
+The example keeps ordinary progress lines at up to 400 characters while
+command/exec lines use a 100-character limit. `commandMaxLineChars` is an
+optional positive integer; when omitted, command lines inherit `maxLineChars`.
+On Telegram native progress blocks, this budget applies to command detail text,
+not the separate tool label or status. It does not enable raw command text or
+change preview-mode limits.
 
 ### Commentary lane
 

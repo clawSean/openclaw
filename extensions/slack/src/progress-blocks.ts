@@ -206,6 +206,7 @@ function buildNativeTasks(params: {
   lines: readonly ChannelProgressDraftLine[];
   plan?: readonly AgentPlanStep[];
   maxLineChars?: number;
+  commandMaxLineChars?: number;
 }): SlackPlanTask[] {
   // Slack cannot remove native rows. Position-keyed plan IDs let snapshots
   // replace row i; reconciliation completes rows that disappear.
@@ -222,7 +223,10 @@ function buildNativeTasks(params: {
   for (const line of params.lines) {
     const id = resolveLineTaskIdentity(line, contentIdOccurrences);
     const task: SlackPlanTask = { id, title: lineTaskTitle(line), status: lineTaskStatus(line) };
-    const details = lineTaskDetails(line, maxLineChars);
+    const details = lineTaskDetails(
+      line,
+      line.commandBearing ? (params.commandMaxLineChars ?? maxLineChars) : maxLineChars,
+    );
     const output = lineTaskOutput(line);
     if (details) {
       task.details = details;
@@ -263,6 +267,7 @@ export function buildSlackProgressStreamChunks(params: {
   lines: readonly ChannelProgressDraftLine[];
   plan?: readonly AgentPlanStep[];
   maxLineChars?: number;
+  commandMaxLineChars?: number;
   /** Quiet cards keep one stable work row instead of a task per tool call. */
   summaryRow?: boolean;
   /** Terminal status applied to rows still in progress when the turn finishes. */
@@ -275,6 +280,7 @@ export function buildSlackProgressStreamChunks(params: {
     lines: params.summaryRow ? [] : params.lines.filter((line) => line.kind !== "approval"),
     plan: params.plan,
     maxLineChars: params.maxLineChars,
+    commandMaxLineChars: params.commandMaxLineChars,
   });
   const contentIdOccurrences = new Map<string, number>();
   const attention: SlackPlanTask[] = [];
@@ -368,13 +374,20 @@ function joinRecentProgressRows(rows: readonly string[]): string {
   return rendered.toReversed().join("\n");
 }
 
-function buildActivityText(lines: readonly ChannelProgressDraftLine[], maxLineChars: number) {
+function buildActivityText(
+  lines: readonly ChannelProgressDraftLine[],
+  maxLineChars: number,
+  commandMaxLineChars?: number,
+) {
   return joinRecentProgressRows(
     lines.slice(-SLACK_MAX_BLOCKS).map((line) => {
       if (line.kind === "item" && !line.toolName) {
         return `_${renderProgressCardText(compactDetail(line.text, maxLineChars), "italic")}_`;
       }
-      const detail = compactDetail(lineDetailParts(line).join(" · "), maxLineChars);
+      const detail = compactDetail(
+        lineDetailParts(line).join(" · "),
+        line.commandBearing ? (commandMaxLineChars ?? maxLineChars) : maxLineChars,
+      );
       return escapeSlackMrkdwn(detail ? `${line.label} — ${detail}` : line.label);
     }),
   );
@@ -388,6 +401,7 @@ export function buildSlackProgressCardBlocks(params: {
   plan?: readonly AgentPlanStep[];
   narration?: readonly SlackProgressText[];
   maxLineChars?: number;
+  commandMaxLineChars?: number;
   toolCalls?: number;
   elapsedSeconds?: number;
   diffStat?: SlackProgressDiffStat;
@@ -452,6 +466,7 @@ export function buildSlackProgressCardBlocks(params: {
     buildActivityText(
       lines.filter((line) => line.kind !== "approval" && lineTaskStatus(line) !== "error"),
       maxLineChars,
+      params.commandMaxLineChars,
     ),
     // Attention has its own bounded section so activity truncation cannot hide it.
     joinRecentProgressRows(attention),

@@ -67,3 +67,28 @@ export function combineProgressHeadlineAndExplanation(
     ? `${headline} — ${explanation}`
     : (headline ?? explanation);
 }
+
+function normalizeProgressTitleText(text: string | undefined): string {
+  return text?.replace(/\s+/gu, " ").trim() ?? "";
+}
+
+/** Whether authored text is already represented by the native progress title. */
+export function isSlackProgressTextRenderedAsTitle(params: {
+  text: string | undefined;
+  explicitTitle: string | undefined;
+  snapshot: ChannelProgressDraftCompositorSnapshot;
+}): boolean {
+  const candidate = normalizeProgressTitleText(params.text);
+  if (!candidate) {
+    return false;
+  }
+  const { snapshot } = params;
+  const title = normalizeProgressTitleText(
+    combineProgressHeadlineAndExplanation(
+      params.explicitTitle ??
+        (snapshot.statusHeadlineFormat === "plain" ? undefined : snapshot.statusHeadline),
+      snapshot.planExplanationFormat === "plain" ? undefined : snapshot.planExplanation,
+    ),
+  );
+  return title.length > 0 && title.includes(candidate);
+}
