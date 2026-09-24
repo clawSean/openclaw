@@ -433,6 +433,7 @@ describe("voice-call plugin", () => {
     }
     expect(methodScopes.get("voicecall.continue.result")).toBe("operator.read");
     expect(methodScopes.get("voicecall.status")).toBe("operator.read");
+    expect(methodScopes.get("voicecall.inspect")).toBe("operator.read");
   });
 
   it("preserves mode on legacy voicecall.start", async () => {
@@ -515,6 +516,110 @@ describe("voice-call plugin", () => {
       expect.objectContaining({ agentId: "support" }),
     );
     expect(firstRespondCall(respond)[0]).toBe(true);
+  });
+
+  it("accepts a private objective only from a trusted plugin runtime", async () => {
+    const { methods } = setup({ provider: "mock" });
+    const handler = methods.get("voicecall.start") as
+      | ((ctx: {
+          params: Record<string, unknown>;
+          client?: { internal?: { pluginRuntimeOwnerId?: string } };
+          respond: ReturnType<typeof vi.fn>;
+        }) => Promise<void>)
+      | undefined;
+    const respond = vi.fn();
+
+    await handler?.({
+      params: {
+        to: "+15550001234",
+        message: "Hello",
+        objective: "Ask about appointment availability.",
+      },
+      client: { internal: { pluginRuntimeOwnerId: "task-call" } },
+      respond,
+    });
+
+    expect(runtimeStub.manager["initiateCall"]).toHaveBeenCalledWith(
+      "+15550001234",
+      undefined,
+      expect.objectContaining({
+        message: "Hello",
+        objective: "Ask about appointment availability.",
+      }),
+    );
+    expect(firstRespondCall(respond)[0]).toBe(true);
+  });
+
+  it("rejects a private objective from an external caller", async () => {
+    const { methods } = setup({ provider: "mock" });
+    const handler = methods.get("voicecall.start") as
+      | ((ctx: {
+          params: Record<string, unknown>;
+          respond: ReturnType<typeof vi.fn>;
+        }) => Promise<void>)
+      | undefined;
+    const respond = vi.fn();
+
+    await handler?.({
+      params: { to: "+15550001234", objective: "Hidden mission" },
+      respond,
+    });
+
+    expect(runtimeStub.manager["initiateCall"]).not.toHaveBeenCalled();
+    expect(firstRespondCall(respond)[2]?.code).toBe("INVALID_REQUEST");
+  });
+
+  it("returns transcript inspection only to a trusted plugin runtime", async () => {
+    const call = createCallRecord({
+      metadata: { objective: "private objective" },
+      transcript: [
+        {
+          timestamp: Date.UTC(2026, 4, 2, 9, 1, 0),
+          speaker: "assistant",
+          text: "What is your earliest screening date?",
+          isFinal: true,
+        },
+      ],
+    });
+    runtimeStub.manager.getCallFromMemoryOrStore = vi.fn(async () => call);
+    const { methods } = setup({ provider: "mock" });
+    const handler = methods.get("voicecall.inspect") as
+      | ((ctx: {
+          params: Record<string, unknown>;
+          client?: { internal?: { pluginRuntimeOwnerId?: string } };
+          respond: ReturnType<typeof vi.fn>;
+        }) => Promise<void>)
+      | undefined;
+    const respond = vi.fn();
+
+    await handler?.({
+      params: { callId: "call-1" },
+      client: { internal: { pluginRuntimeOwnerId: "task-call" } },
+      respond,
+    });
+
+    const [ok, payload] = firstRespondCall(respond);
+    expect(ok).toBe(true);
+    expect(payload?.call).toMatchObject({
+      callId: "call-1",
+      transcript: [{ speaker: "assistant", text: "What is your earliest screening date?" }],
+    });
+    expect(payload?.call).not.toHaveProperty("metadata");
+  });
+
+  it("rejects transcript inspection from an external caller", async () => {
+    const { methods } = setup({ provider: "mock" });
+    const handler = methods.get("voicecall.inspect") as
+      | ((ctx: {
+          params: Record<string, unknown>;
+          respond: ReturnType<typeof vi.fn>;
+        }) => Promise<void>)
+      | undefined;
+    const respond = vi.fn();
+
+    await handler?.({ params: { callId: "call-1" }, respond });
+
+    expect(firstRespondCall(respond)[2]?.code).toBe("INVALID_REQUEST");
   });
 
   it("rejects external per-call agent routing", async () => {

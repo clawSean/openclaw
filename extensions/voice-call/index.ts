@@ -412,12 +412,30 @@ export default definePluginEntry({
     );
 
     registerGatewayCommand(
+      "voicecall.inspect",
+      ({ params, client }) => {
+        const pluginOwnerId = normalizeOptionalString(client?.internal?.pluginRuntimeOwnerId);
+        if (!pluginOwnerId) {
+          throw new VoiceCallCommandInputError("inspect requires a trusted plugin caller");
+        }
+        return commands.inspect(
+          normalizeOptionalString(params?.callId) ?? normalizeOptionalString(params?.sid),
+        );
+      },
+      VOICE_CALL_READ_METHOD_SCOPE,
+    );
+
+    registerGatewayCommand(
       "voicecall.start",
       async ({ params, client }) => {
         const to = normalizeOptionalString(params?.to);
+        const objective = normalizeOptionalString(params?.objective);
         const requestedAgentId = normalizeOptionalString(params?.agentId);
         const normalizedAgentId = requestedAgentId ? normalizeAgentId(requestedAgentId) : undefined;
         const pluginOwnerId = normalizeOptionalString(client?.internal?.pluginRuntimeOwnerId);
+        if (objective && !pluginOwnerId) {
+          throw new VoiceCallCommandInputError("objective requires a trusted plugin caller");
+        }
         if (
           requestedAgentId &&
           (!pluginOwnerId || normalizedAgentId !== requestedAgentId.toLowerCase())
@@ -432,6 +450,7 @@ export default definePluginEntry({
         return await commands.initiate({
           to,
           message: normalizeOptionalString(params?.message),
+          objective,
           mode:
             params?.mode === "notify" || params?.mode === "conversation" ? params.mode : undefined,
           dtmfSequence: normalizeOptionalString(params?.dtmfSequence),

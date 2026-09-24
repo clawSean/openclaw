@@ -309,6 +309,7 @@ describe("voice-call outbound helpers", () => {
     const result = await initiateCall(ctx as never, "+14155550123", "session-1", {
       mode: "conversation",
       message: "hello meet",
+      objective: "Ask about appointment availability.",
       dtmfSequence: "ww123456#",
     });
 
@@ -333,6 +334,7 @@ describe("voice-call outbound helpers", () => {
       ctx.activeCalls.get(callId) as { metadata?: Record<string, unknown> } | undefined
     )?.metadata;
     expect(metadata?.initialMessage).toBe("hello meet");
+    expect(metadata?.objective).toBe("Ask about appointment availability.");
     expect(metadata?.mode).toBe("conversation");
   });
 
