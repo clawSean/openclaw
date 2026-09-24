@@ -4,6 +4,8 @@ import type { CallMode } from "./config.js";
 import type { VoiceCallRuntime } from "./runtime.js";
 import type { CallRecord } from "./types.js";
 
+const MAX_PRIVATE_OBJECTIVE_CHARS = 8_000;
+
 type VoiceCallStatus = Pick<
   CallRecord,
   | "callId"
@@ -44,6 +46,19 @@ function requireSuccess(result: { success: boolean; error?: string }, fallback: 
   if (!result.success) {
     throw new Error(result.error || fallback);
   }
+}
+
+function normalizePrivateObjective(value: string | undefined): string | undefined {
+  const objective = value?.trim();
+  if (!objective) {
+    return undefined;
+  }
+  if (objective.length > MAX_PRIVATE_OBJECTIVE_CHARS) {
+    throw new VoiceCallCommandInputError(
+      `objective must be ${MAX_PRIVATE_OBJECTIVE_CHARS} characters or fewer`,
+    );
+  }
+  return objective;
 }
 
 export function createVoiceCallCommandService(ensureRuntime: () => Promise<VoiceCallRuntime>) {
@@ -95,6 +110,7 @@ export function createVoiceCallCommandService(ensureRuntime: () => Promise<Voice
       params: {
         to?: string;
         message?: string;
+        objective?: string;
         mode?: CallMode;
         sessionKey?: string;
         dtmfSequence?: string;
@@ -107,6 +123,7 @@ export function createVoiceCallCommandService(ensureRuntime: () => Promise<Voice
       const to = requireInput(params.to ?? rt.config.toNumber, missingToMessage);
       const result = await rt.manager.initiateCall(to, params.sessionKey, {
         message: params.message,
+        objective: normalizePrivateObjective(params.objective),
         mode: params.mode,
         dtmfSequence: params.dtmfSequence,
         ...(params.requesterSessionKey ? { requesterSessionKey: params.requesterSessionKey } : {}),
@@ -166,6 +183,21 @@ export function createVoiceCallCommandService(ensureRuntime: () => Promise<Voice
       }
       const call = await rt.manager.getCallFromMemoryOrStore(callId);
       return call ? { found: true, call: toVoiceCallStatus(call) } : { found: false };
+    },
+
+    async inspect(callId?: string) {
+      const resolvedCallId = requireInput(callId, "callId required");
+      const rt = await ensureRuntime();
+      const call = await rt.manager.getCallFromMemoryOrStore(resolvedCallId);
+      return call
+        ? {
+            found: true,
+            call: {
+              ...toVoiceCallStatus(call),
+              transcript: call.transcript,
+            },
+          }
+        : { found: false };
     },
   };
 }

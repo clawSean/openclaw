@@ -459,11 +459,15 @@ describe("createVoiceCallRuntime lifecycle", () => {
       direction: "outbound",
       from: "+15550001111",
       to: "+15550002222",
+      metadata: { objective: "Ask about the earliest appointment." },
     });
     expect(supportRegistration.agentId).toBe("support");
     expect(supportRegistration.instructions).toContain("- Agent id: support");
     expect(supportRegistration.instructions).toContain("- Name: Support Voice");
     expect(supportRegistration.instructions).not.toContain("Main Voice");
+    expect(supportRegistration.instructions).toContain("Private outbound task objective:");
+    expect(supportRegistration.instructions).toContain("Ask about the earliest appointment.");
+    expect(supportRegistration.instructions).toContain("Never read or paraphrase");
 
     const unknownRegistration = resolveCallRegistration({
       callId: "call-unknown",
