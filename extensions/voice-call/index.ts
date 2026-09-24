@@ -50,6 +50,9 @@ const VoiceCallToolSchema = Type.Union([
     action: Type.Literal("initiate_call"),
     to: Type.Optional(Type.String({ description: "Call target" })),
     message: Type.String({ description: "Intro message" }),
+    objective: Type.Optional(
+      Type.String({ description: "Private call objective retained for the conversation" }),
+    ),
     mode: Type.Optional(Type.Union([Type.Literal("notify"), Type.Literal("conversation")])),
     sessionKey: Type.Optional(Type.String({ description: "OpenClaw session key for the call" })),
     dtmfSequence: Type.Optional(Type.String({ description: "DTMF digits to play before connect" })),
@@ -75,6 +78,10 @@ const VoiceCallToolSchema = Type.Union([
   }),
   Type.Object({
     action: Type.Literal("get_status"),
+    callId: Type.String({ description: "Call ID" }),
+  }),
+  Type.Object({
+    action: Type.Literal("inspect_call"),
     callId: Type.String({ description: "Call ID" }),
   }),
   Type.Object({
@@ -490,6 +497,7 @@ export default definePluginEntry({
                   await commands.initiate({
                     to: normalizeOptionalString(rawParams.to),
                     message,
+                    objective: normalizeOptionalString(rawParams.objective),
                     dtmfSequence: normalizeOptionalString(rawParams.dtmfSequence),
                     mode:
                       rawParams.mode === "notify" || rawParams.mode === "conversation"
@@ -530,6 +538,13 @@ export default definePluginEntry({
                   throw new VoiceCallCommandInputError("callId required");
                 }
                 return json(await commands.status(callId));
+              }
+              case "inspect_call": {
+                const callId = normalizeOptionalString(rawParams.callId);
+                if (!callId) {
+                  throw new VoiceCallCommandInputError("callId required");
+                }
+                return json(await commands.inspectOwned(callId, requesterSessionKey));
               }
             }
           }

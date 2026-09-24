@@ -35,6 +35,13 @@ function toVoiceCallStatus(call: CallRecord): VoiceCallStatus {
   };
 }
 
+function toVoiceCallInspection(call: CallRecord) {
+  return {
+    ...toVoiceCallStatus(call),
+    transcript: call.transcript,
+  };
+}
+
 function requireInput(value: string | undefined, message: string): string {
   if (!value) {
     throw new VoiceCallCommandInputError(message);
@@ -192,11 +199,21 @@ export function createVoiceCallCommandService(ensureRuntime: () => Promise<Voice
       return call
         ? {
             found: true,
-            call: {
-              ...toVoiceCallStatus(call),
-              transcript: call.transcript,
-            },
+            call: toVoiceCallInspection(call),
           }
+        : { found: false };
+    },
+
+    async inspectOwned(callId?: string, requesterSessionKey?: string) {
+      const resolvedCallId = requireInput(callId, "callId required");
+      const resolvedRequesterSessionKey = requireInput(
+        requesterSessionKey,
+        "requester session required",
+      );
+      const rt = await ensureRuntime();
+      const call = await rt.manager.getCallFromMemoryOrStore(resolvedCallId);
+      return call?.metadata?.requesterSessionKey === resolvedRequesterSessionKey
+        ? { found: true, call: toVoiceCallInspection(call) }
         : { found: false };
     },
   };

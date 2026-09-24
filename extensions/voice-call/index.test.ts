@@ -575,7 +575,7 @@ describe("voice-call plugin", () => {
       transcript: [
         {
           timestamp: Date.UTC(2026, 4, 2, 9, 1, 0),
-          speaker: "assistant",
+          speaker: "bot",
           text: "What is your earliest screening date?",
           isFinal: true,
         },
@@ -602,7 +602,7 @@ describe("voice-call plugin", () => {
     expect(ok).toBe(true);
     expect(payload?.call).toMatchObject({
       callId: "call-1",
-      transcript: [{ speaker: "assistant", text: "What is your earliest screening date?" }],
+      transcript: [{ speaker: "bot", text: "What is your earliest screening date?" }],
     });
     expect(payload?.call).not.toHaveProperty("metadata");
   });
@@ -898,6 +898,33 @@ describe("voice-call plugin", () => {
     },
   );
 
+  it("retains a private objective for tool-created calls", async () => {
+    const { tools } = setup(
+      { provider: "mock" },
+      { agentId: "mainelobster", sessionKey: "agent:mainelobster:telegram:group:medclaw" },
+    );
+    const tool = tools[0] as {
+      execute: (id: string, params: unknown) => Promise<unknown>;
+    };
+
+    await tool.execute("id", {
+      action: "initiate_call",
+      to: "+15550001234",
+      message: "Hi, I'm calling about new-patient screening.",
+      objective: "Ask whether the clinic accepts new teaching cases and the earliest date.",
+      mode: "conversation",
+    });
+
+    expect(runtimeStub.manager["initiateCall"]).toHaveBeenCalledWith(
+      "+15550001234",
+      undefined,
+      expect.objectContaining({
+        message: "Hi, I'm calling about new-patient screening.",
+        objective: "Ask whether the clinic accepts new teaching cases and the earliest date.",
+      }),
+    );
+  });
+
   it("does not expose requester session identity to the model", () => {
     const { tools } = setup({ provider: "mock" });
     const tool = tools[0] as { parameters: unknown };
@@ -965,6 +992,77 @@ describe("voice-call plugin", () => {
       callId: "call-1",
     })) as { details: { found?: boolean } };
     expect(result.details.found).toBe(false);
+  });
+
+  it("tool inspect_call returns transcript without private metadata", async () => {
+    runtimeStub.manager.getCallFromMemoryOrStore = vi.fn(async () =>
+      createCallRecord({
+        metadata: {
+          objective: "private objective",
+          requesterSessionKey: "agent:mainelobster:telegram:group:medclaw",
+        },
+        state: "completed",
+        transcript: [
+          {
+            timestamp: Date.UTC(2026, 4, 2, 9, 1, 0),
+            speaker: "bot",
+            text: "What is your earliest screening date?",
+            isFinal: true,
+          },
+        ],
+      }),
+    );
+    const { tools } = setup(
+      { provider: "mock" },
+      { sessionKey: "agent:mainelobster:telegram:group:medclaw" },
+    );
+    const tool = tools[0] as {
+      execute: (id: string, params: unknown) => Promise<unknown>;
+    };
+
+    const result = (await tool.execute("id", {
+      action: "inspect_call",
+      callId: "call-1",
+    })) as { details: { call?: { transcript?: unknown[]; metadata?: unknown } } };
+
+    expect(result.details.call?.transcript).toEqual([
+      expect.objectContaining({
+        speaker: "bot",
+        text: "What is your earliest screening date?",
+      }),
+    ]);
+    expect(result.details.call).not.toHaveProperty("metadata");
+  });
+
+  it("tool inspect_call hides calls owned by another requester session", async () => {
+    runtimeStub.manager.getCallFromMemoryOrStore = vi.fn(async () =>
+      createCallRecord({
+        metadata: { requesterSessionKey: "agent:other:telegram:group:private" },
+        state: "completed",
+        transcript: [
+          {
+            timestamp: Date.UTC(2026, 4, 2, 9, 1, 0),
+            speaker: "user",
+            text: "private transcript",
+            isFinal: true,
+          },
+        ],
+      }),
+    );
+    const { tools } = setup(
+      { provider: "mock" },
+      { sessionKey: "agent:mainelobster:telegram:group:medclaw" },
+    );
+    const tool = tools[0] as {
+      execute: (id: string, params: unknown) => Promise<unknown>;
+    };
+
+    const result = (await tool.execute("id", {
+      action: "inspect_call",
+      callId: "call-foreign",
+    })) as { details: { found?: boolean; call?: unknown } };
+
+    expect(result.details).toEqual({ found: false });
   });
 
   it("tool send_dtmf returns json payload", async () => {
