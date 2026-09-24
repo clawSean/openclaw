@@ -405,12 +405,19 @@ failure notice.
 
 Progress-mode drafts (`streaming.progress.*`) have these per-channel settings:
 
-| Key                               | Default       | Behavior                                                       |
-| --------------------------------- | ------------- | -------------------------------------------------------------- |
-| `streaming.progress.maxLines`     | `8`           | Max compact progress lines kept below the draft label          |
-| `streaming.progress.maxLineChars` | `120`         | Max characters per compact line before truncation (word-aware) |
-| `streaming.progress.label`        | `"auto"`      | Draft title; a custom string, or `false` to hide it            |
-| `streaming.progress.labels`       | built-in pool | Candidate labels used when `label: "auto"`                     |
+| Key                                      | Default                 | Behavior                                                        |
+| ---------------------------------------- | ----------------------- | --------------------------------------------------------------- |
+| `streaming.progress.maxLines`            | `8`                     | Max compact progress lines kept below the draft label           |
+| `streaming.progress.maxLineChars`        | `120`                   | Max characters per compact line before truncation (word-aware)  |
+| `streaming.progress.commandMaxLineChars` | inherits `maxLineChars` | Optional positive-integer limit for command/exec progress lines |
+| `streaming.progress.label`               | `"auto"`                | Draft title; a custom string, or `false` to hide it             |
+| `streaming.progress.labels`              | built-in pool           | Candidate labels used when `label: "auto"`                      |
+
+Use `commandMaxLineChars` to keep command lines compact without shortening
+commentary and other progress text. Omitting it preserves the existing
+`maxLineChars` limit. On Telegram native progress blocks, it limits command
+detail text, not the separate tool label or status. Command text still requires
+`commandText: "raw"`; see [Command/exec text](/concepts/progress-drafts#commandexec-text).
 
 Slack always renders progress mode as its fixed session-card layout; these
 limits still bound the activity rows and plan text inside that card.

@@ -663,6 +663,35 @@ describe("native Slack progress stream chunks", () => {
     ]);
   });
 
+  it("limits native command details independently from prose", () => {
+    const detail = "abcdefghijklmnopqrstuvwxyz";
+    const chunks = buildSlackProgressStreamChunks({
+      title: "Working",
+      maxLineChars: 80,
+      commandMaxLineChars: 12,
+      lines: [
+        { id: "command", kind: "tool", label: "Bash", text: detail, detail, commandBearing: true },
+        { id: "prose", kind: "item", label: "Update", text: detail, detail },
+      ],
+    });
+    expect(chunks).toContainEqual(
+      expect.objectContaining({
+        type: "task_update",
+        title: "Bash",
+        status: "in_progress",
+        details: "abcde…uvwxyz",
+      }),
+    );
+    expect(chunks).toContainEqual(
+      expect.objectContaining({
+        type: "task_update",
+        title: "Update",
+        status: "in_progress",
+        details: detail,
+      }),
+    );
+  });
+
   it("separates inline file deltas from native task details", () => {
     expect(
       buildSlackProgressStreamChunks({

@@ -13,6 +13,7 @@ import type {
 import {
   buildChannelAllowBotsSchema,
   buildChannelReactionShape,
+  ChannelStreamingProgressSchema,
 } from "./zod-schema.channel-messaging-common.js";
 
 type WhatsAppReactionLevelContract = "off" | "ack" | "minimal" | "extensive";
@@ -88,5 +89,20 @@ describe("schema-derived channel config types", () => {
     expect(emptyReactionSchema.parse({})).toEqual({});
     expect(falseReactionSchema.parse({})).toEqual({});
     expect(optionalReactionSchema.parse({})).toEqual({});
+  });
+});
+
+describe("progress command line limit", () => {
+  it("accepts an independent limit without materializing an omitted override", () => {
+    expect(ChannelStreamingProgressSchema.parse({ maxLineChars: 400 })).toEqual({
+      maxLineChars: 400,
+    });
+    expect(
+      ChannelStreamingProgressSchema.parse({ maxLineChars: 400, commandMaxLineChars: 100 }),
+    ).toEqual({ maxLineChars: 400, commandMaxLineChars: 100 });
+  });
+
+  it.each([0, -1, 1.5, "100"])("rejects invalid command limit %s", (commandMaxLineChars) => {
+    expect(ChannelStreamingProgressSchema.safeParse({ commandMaxLineChars }).success).toBe(false);
   });
 });

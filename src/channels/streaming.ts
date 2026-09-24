@@ -14,7 +14,6 @@ import type {
   BlockStreamingChunkConfig,
   BlockStreamingCoalesceConfig,
   ChannelStreamingCommandTextMode,
-  ChannelStreamingProgressConfig,
   StreamingMode,
   TextChunkMode,
 } from "../config/types.base.js";
@@ -35,6 +34,9 @@ import {
 } from "./progress-draft-lines.js";
 import {
   getChannelStreamingConfigObject,
+  resolveChannelProgressDraftConfig,
+  resolveChannelProgressDraftMaxLineChars,
+  resolveChannelProgressDraftMaxLines,
   type StreamingCompatEntry,
 } from "./streaming-config-readers.js";
 
@@ -43,6 +45,9 @@ export type { ChannelProgressDraftLine } from "./progress-draft-lines.js";
 
 export {
   getChannelStreamingConfigObject,
+  resolveChannelProgressDraftConfig,
+  resolveChannelProgressDraftMaxLineChars,
+  resolveChannelProgressDraftMaxLines,
   resolveChannelStreamingNativeTransport,
 } from "./streaming-config-readers.js";
 export type { StreamingCompatEntry } from "./streaming-config-readers.js";
@@ -58,10 +63,6 @@ export type {
 
 // Runtime reads are nested-only; doctor migrates legacy streaming spellings.
 
-function asInteger(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isInteger(value) ? value : undefined;
-}
-
 function parsePreviewStreamingMode(value: unknown): StreamingMode | null {
   const normalized = normalizeOptionalLowercaseString(value);
   if (
@@ -75,10 +76,6 @@ function parsePreviewStreamingMode(value: unknown): StreamingMode | null {
   return null;
 }
 
-function asProgressConfig(value: unknown): ChannelStreamingProgressConfig | undefined {
-  return (asObjectRecord(value) as ChannelStreamingProgressConfig | null) ?? undefined;
-}
-
 function asCommandTextMode(value: unknown): ChannelStreamingCommandTextMode | undefined {
   return value === "raw" || value === "status" ? value : undefined;
 }
@@ -87,7 +84,6 @@ function asCommandTextMode(value: unknown): ChannelStreamingCommandTextMode | un
 // quick answer posts no draft at all: the gate only creates the draft when the
 // timer fires, and finalize cancels it.
 const DEFAULT_PROGRESS_DRAFT_INITIAL_DELAY_MS = 1_500;
-const DEFAULT_PROGRESS_DRAFT_MAX_LINE_CHARS = 120;
 // Narration is a short paragraph, not a compact tool line; it gets its own
 // budget so the utility-model text is not mid-word truncated at line width.
 const PROGRESS_DRAFT_NARRATION_MAX_CHARS = 280;
@@ -269,6 +265,7 @@ function buildNamedProgressLine(
   fields?: {
     correlationKey?: string;
     commandDetailCandidate?: string;
+    commandBearing?: boolean;
     id?: string;
     status?: string;
   },
@@ -292,6 +289,7 @@ function buildNamedProgressLine(
     ...(detail ? { detail } : {}),
     ...(fields?.status ? { status: fields.status } : {}),
     toolName: display.name,
+    ...(fields?.commandBearing ? { commandBearing: true } : {}),
   };
   setProgressDraftLineMetadata(line, fields?.correlationKey, fields?.commandDetailCandidate);
   return line;
@@ -406,6 +404,7 @@ function buildCommandOutputProgressLine(
   const line = buildNamedProgressLine(input.event, name, detail, options, {
     correlationKey,
     commandDetailCandidate,
+    commandBearing: true,
     id: resolveProgressDraftLineId(input, true),
     status,
   });
@@ -482,6 +481,7 @@ export function buildChannelProgressDraftLine(
         ],
         options,
         {
+          commandBearing,
           correlationKey: commandBearing ? resolveCommandProgressCorrelationKey(input) : undefined,
           id: itemId,
         },
@@ -508,6 +508,7 @@ export function buildChannelProgressDraftLine(
       }
       if (name) {
         const line = buildNamedProgressLine(input.event, name, [meta], options, {
+          commandBearing,
           correlationKey: commandBearing ? resolveCommandProgressCorrelationKey(input) : undefined,
           id: resolveProgressDraftLineId(input),
           status: input.status,
@@ -533,6 +534,7 @@ export function buildChannelProgressDraftLine(
       const line = {
         ...(id ? { id } : {}),
         kind: input.event,
+        ...(commandBearing ? { commandBearing: true } : {}),
         text,
         label: input.title?.trim() || input.itemKind?.trim() || "Update",
         ...(input.status ? { status: input.status } : {}),
@@ -874,12 +876,6 @@ export function resolveChannelPreviewStreamMode(
   return parsePreviewStreamingMode(getChannelStreamingConfigObject(entry)?.mode) ?? defaultMode;
 }
 
-export function resolveChannelProgressDraftConfig(
-  entry: StreamingCompatEntry | null | undefined,
-): ChannelStreamingProgressConfig {
-  return asProgressConfig(getChannelStreamingConfigObject(entry)?.progress) ?? {};
-}
-
 export function resolveChannelProgressDraftLabel(params: {
   entry?: StreamingCompatEntry | null;
   seed?: string;
@@ -905,22 +901,6 @@ export function resolveChannelProgressDraftLabel(params: {
     random: params.random,
   });
   return label ? redactToolPayloadText(label) : label;
-}
-
-export function resolveChannelProgressDraftMaxLines(
-  entry: StreamingCompatEntry | null | undefined,
-  defaultValue = 8,
-): number {
-  const configured = asInteger(resolveChannelProgressDraftConfig(entry).maxLines);
-  return configured && configured > 0 ? configured : defaultValue;
-}
-
-export function resolveChannelProgressDraftMaxLineChars(
-  entry: StreamingCompatEntry | null | undefined,
-  defaultValue = DEFAULT_PROGRESS_DRAFT_MAX_LINE_CHARS,
-): number {
-  const configured = asInteger(resolveChannelProgressDraftConfig(entry).maxLineChars);
-  return configured && configured > 0 ? configured : defaultValue;
 }
 
 function compactProgressLineDetail(detail: string, maxChars: number): string {
@@ -1281,6 +1261,7 @@ function formatProgressDraftText(
   );
   const maxLines = resolveChannelProgressDraftMaxLines(params.entry);
   const maxLineChars = resolveChannelProgressDraftMaxLineChars(params.entry);
+  const commandMaxLineChars = resolveChannelProgressDraftConfig(params.entry).commandMaxLineChars;
   const formatLine = params.formatLine ?? ((line: string) => line);
   const attention = params.lines.filter(isPriorityLine);
   const planLines = formatPlanChecklistLines(params.plan ?? [], {
@@ -1307,6 +1288,10 @@ function formatProgressDraftText(
   const visibleLines = [...params.lines.filter((line) => !isPriorityLine(line)), ...attention];
   const renderedToolLines = visibleLines
     .map((line) => {
+      const lineMaxChars =
+        typeof line !== "string" && line.commandBearing
+          ? (commandMaxLineChars ?? maxLineChars)
+          : maxLineChars;
       if (params.presentation === "summary") {
         if (typeof line === "string") {
           return undefined;
@@ -1319,11 +1304,11 @@ function formatProgressDraftText(
               : line.id === "reasoning" || line.id?.startsWith("commentary:")
                 ? line.text
                 : undefined;
-        return text ? formatLine(compactChannelProgressDraftLine(text, maxLineChars)) : undefined;
+        return text ? formatLine(compactChannelProgressDraftLine(text, lineMaxChars)) : undefined;
       }
       const text = compactChannelProgressDraftLine(
         typeof line === "string" ? line : getProgressDraftLineText(line),
-        maxLineChars,
+        lineMaxChars,
       );
       if (!text) {
         return undefined;

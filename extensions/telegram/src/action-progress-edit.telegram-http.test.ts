@@ -255,3 +255,59 @@ it.each([
     ]);
   });
 });
+
+// Adopted cards bypass the live compositor; prove both native encodings use the account limit.
+it.each([false, true])("bounds adopted command details (rich=%s)", async (richMessages) => {
+  await withOpenClawTestState({ prefix: "telegram-command-limit-" }, async () => {
+    resetTelegramClientOptionsCacheForTests();
+    requests.length = 0;
+    const prose = "Checking the configuration and then verifying the complete result.";
+    await telegramPlugin.actions?.handleAction?.({
+      channel: "telegram",
+      action: "edit",
+      accountId: "worker",
+      cfg: {
+        channels: {
+          telegram: {
+            botToken: "123456:command-limit-fixture",
+            apiRoot,
+            streaming: { progress: { maxLineChars: 8, commandMaxLineChars: 8 } },
+            accounts: {
+              worker: {
+                richMessages,
+                streaming: {
+                  mode: "progress",
+                  progress: {
+                    toolProgress: true,
+                    maxLineChars: 400,
+                    commandMaxLineChars: 40,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      params: { to: "123", messageId: "42", message: "fallback" },
+      progressSnapshot: {
+        statusHeadline: prose,
+        lines: [
+          {
+            kind: "tool",
+            label: "Exec",
+            toolName: "exec",
+            commandBearing: true,
+            text: "echo " + "x".repeat(180),
+            detail: "echo " + "x".repeat(180),
+          },
+        ],
+      },
+      conversationReadOrigin: "direct-operator",
+    });
+    expect(requests).toHaveLength(1);
+    const payload = JSON.stringify(requests[0]!.fields);
+    expect(payload).toContain(prose);
+    expect(payload).toContain("…");
+    expect(payload).not.toContain("x".repeat(40));
+  });
+});

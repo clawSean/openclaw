@@ -185,6 +185,47 @@ describe("Telegram progress command detail through the shared dispatcher and Tel
     },
   );
 
+  it("uses the command limit in Telegram HTTP while preserving longer commentary", async () => {
+    const prose = "Checking the configuration and then verifying the complete result.";
+    await dispatchProgressTurn(
+      async (options) => {
+        await options?.onItemEvent?.({
+          kind: "preamble",
+          itemId: "limit-preamble",
+          phase: "end",
+          progressText: prose,
+        });
+        await emitToolStart(options, {
+          name: "exec",
+          phase: "start",
+          toolCallId: "limited-command",
+          args: { command: "echo " + "x".repeat(180) },
+        });
+        await waitForBotApiCall((call) => String(call.fields.text).includes("Exec"));
+        const card = [...visibleMessages.values()].join("\n");
+        expect(card).toContain(prose);
+        expect(card).toContain("…");
+        expect(card).not.toContain("x".repeat(40));
+      },
+      {
+        mode: "progress",
+        toolProgress: true,
+        telegramCfg: {
+          streaming: {
+            mode: "progress",
+            progress: {
+              toolProgress: true,
+              commandText: "raw",
+              maxLineChars: 400,
+              commandMaxLineChars: 40,
+            },
+          },
+        },
+        finalReply: { text: "Verification complete." },
+      },
+    );
+  });
+
   it("keeps the command text through the embedded producer's terminal command item", async () => {
     // The embedded exec producer's event order for one failing command: the
     // tool start, the tool and command items opening, a status-only output

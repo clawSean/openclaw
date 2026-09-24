@@ -19,6 +19,8 @@ export type ChannelProgressDraftLine = {
   complete?: boolean;
   /** Normalized tool name when the line represents tool work. */
   toolName?: string;
+  /** Command classification retained across native rendering and snapshot transfer. */
+  commandBearing?: boolean;
   /** Whether final formatting should add a bullet/line prefix. */
   prefix?: boolean;
 };

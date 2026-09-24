@@ -4,6 +4,7 @@ import {
   createChannelProgressWorkCounter,
   createDraftStreamLoop,
   createLivePreviewLifecycle,
+  resolveChannelProgressDraftConfig,
   resolveChannelProgressDraftMaxLineChars,
   resolveChannelStreamingPreviewToolProgress,
   resolveChannelStreamingSuppressDefaultToolProgressMessages,
@@ -141,6 +142,7 @@ export function createSlackProgressRuntime(runtimeParams: {
     Boolean(draftStream) && isProgressMode && slackProgressStyle === "card";
   const explicitProgressTitle = resolveExplicitSlackProgressTitle(account.config);
   const progressDraftMaxLineChars = resolveChannelProgressDraftMaxLineChars(account.config);
+  const commandMaxLineChars = resolveChannelProgressDraftConfig(account.config).commandMaxLineChars;
   const progressCard = createSlackDraftProgressCardRuntime({
     setup: { account, cfg, ctx, prepared, slackClient },
     draftStream,
@@ -149,6 +151,7 @@ export function createSlackProgressRuntime(runtimeParams: {
     progressSeed,
     explicitTitle: explicitProgressTitle,
     maxLineChars: progressDraftMaxLineChars,
+    commandMaxLineChars,
     getSnapshot: () => progressDraft.getSnapshot(),
     getThreadTs: () => delivery.usedReplyThreadTs,
   });
@@ -247,6 +250,7 @@ export function createSlackProgressRuntime(runtimeParams: {
         lines: resolveNativeProgressLines(snapshot),
         plan: snapshot.plan,
         maxLineChars: progressDraftMaxLineChars,
+        commandMaxLineChars,
         summaryRow: !previewToolProgressEnabled,
       }),
     });
@@ -513,6 +517,7 @@ export function createSlackProgressRuntime(runtimeParams: {
         lines,
         plan: snapshot.plan,
         maxLineChars: progressDraftMaxLineChars,
+        commandMaxLineChars,
         summaryRow: !previewToolProgressEnabled,
         finalInProgressStatus,
         diffStat: snapshot.diffStat,

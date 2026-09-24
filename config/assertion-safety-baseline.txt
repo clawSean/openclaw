@@ -2060,7 +2060,7 @@ src/channels/registry-lookup.ts	1
 src/channels/registry.ts	1
 src/channels/status/read-model.ts	1
 src/channels/streaming-config-readers.ts	1
-src/channels/streaming.ts	5
+src/channels/streaming.ts	4
 src/channels/thread-bindings-policy.ts	2
 src/channels/turn/agent-run-terminal-outcome.ts	1
 src/channels/turn/execution.ts	2

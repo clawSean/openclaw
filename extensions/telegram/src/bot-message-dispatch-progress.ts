@@ -2,8 +2,6 @@ import {
   createChannelProgressDraftCompositor,
   createLivePreviewLifecycle,
   createPreviewMessageReceipt,
-  resolveChannelProgressDraftMaxLineChars,
-  resolveChannelProgressDraftMaxLines,
   type ChannelProgressDraftLine,
 } from "openclaw/plugin-sdk/channel-outbound";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
@@ -22,7 +20,7 @@ import type {
   TelegramProgressStateSlice,
 } from "./bot-message-dispatch.types.js";
 import type { DraftLaneState } from "./lane-delivery-text-deliverer.js";
-import { renderTelegramProgressDraftPreview } from "./progress-draft-preview.js";
+import { renderTelegramProgressDraftPreviewForAccount } from "./progress-draft-preview.js";
 import { editMessageTelegram } from "./send.js";
 
 type BufferedDispatchParams = Parameters<
@@ -103,12 +101,11 @@ export function createProgressState(
       draftState.answerLane.hasStreamedMessage = true;
       draftState.answerLane.finalized = false;
       draftState.answerLane.stream?.updatePreview(
-        renderTelegramProgressDraftPreview(options.snapshot, {
-          toolProgress: progressCompositor.previewToolProgressEnabled,
-          richMessages: config.telegramCfg.richMessages === true,
-          maxLines: resolveChannelProgressDraftMaxLines(config.telegramCfg),
-          maxLineChars: resolveChannelProgressDraftMaxLineChars(config.telegramCfg),
-        }),
+        renderTelegramProgressDraftPreviewForAccount(
+          options.snapshot,
+          config.telegramCfg,
+          progressCompositor.previewToolProgressEnabled,
+        ),
       );
       if (options.flush) {
         await draftState.answerLane.stream?.flush();

@@ -280,6 +280,52 @@ describe("channel-streaming", () => {
     ).toBe("Shelling\n\n• I'm checking whether the generated video exists or if the…");
   });
 
+  it.each(["bash", "exec", "shell", "functions.run"])(
+    "keeps %s commands compact without shortening prose",
+    (name) => {
+      const command = "echo " + "x".repeat(100);
+      const line = buildChannelProgressDraftLine(
+        { event: "tool", name, args: { command } },
+        { commandText: "raw", detailMode: "raw" },
+      )!;
+      const prose = "Checking the configuration and then verifying the complete result.";
+      const render = (commandMaxLineChars?: number) =>
+        formatChannelProgressDraftText({
+          entry: {
+            streaming: { progress: { label: false, maxLineChars: 400, commandMaxLineChars } },
+          },
+          // Round-trip snapshots must retain command classification.
+          lines: [JSON.parse(JSON.stringify(line)), prose],
+        });
+      const bounded = render(40).split("\n");
+      expect(Array.from(bounded[0]!).length).toBeLessThanOrEqual(42);
+      expect(bounded[0]).toContain("…");
+      expect(bounded[1]).toBe(`• ${prose}`);
+      expect(render()).toContain("x".repeat(100));
+    },
+  );
+
+  it("does not classify prose or non-command tools by their displayed text", () => {
+    const prose = "bash and exec are being inspected before checking the result";
+    const line = buildChannelProgressDraftLine(
+      {
+        event: "tool",
+        name: "read",
+        args: { path: "/workspace/bash-command-investigation-notes.md" },
+      },
+      { commandText: "raw" },
+    )!;
+    const rendered = formatChannelProgressDraftText({
+      entry: {
+        streaming: { progress: { label: false, maxLineChars: 400, commandMaxLineChars: 12 } },
+      },
+      lines: [prose, line],
+    });
+    expect(rendered).toContain(prose);
+    expect(rendered).toContain("bash-command-investigation-notes.md");
+    expect(rendered).not.toContain("…");
+  });
+
   it("falls back to plain commentary when compaction drops the closing italic marker", () => {
     expect(
       formatChannelProgressDraftText({

@@ -1,4 +1,8 @@
 import {
+  resolveChannelProgressDraftConfig,
+  resolveChannelProgressDraftMaxLineChars,
+  resolveChannelProgressDraftMaxLines,
+  resolveChannelStreamingPreviewToolProgress,
   compactChannelProgressDraftLine,
   formatChannelProgressDraftDiffStat,
   isChannelProgressAttentionLine,
@@ -6,8 +10,10 @@ import {
   type ChannelProgressDraftCompositorLine,
   type ChannelProgressDraftCompositorSnapshot,
 } from "openclaw/plugin-sdk/channel-outbound";
+import type { TelegramAccountConfig } from "openclaw/plugin-sdk/config-contracts";
 import type { TelegramDraftPreview } from "./draft-stream-message.js";
 import { escapeTelegramHtml, renderTelegramHtmlText } from "./format.js";
+import { resolveTelegramPreviewStreamMode } from "./preview-streaming.js";
 import {
   boldRichText,
   italicRichText,
@@ -85,7 +91,13 @@ function progressLineText(
 
 export function renderTelegramProgressDraftPreview(
   snapshot: ChannelProgressDraftCompositorSnapshot,
-  options: { richMessages: boolean; maxLines: number; maxLineChars: number; toolProgress: boolean },
+  options: {
+    richMessages: boolean;
+    maxLines: number;
+    maxLineChars: number;
+    commandMaxLineChars?: number;
+    toolProgress: boolean;
+  },
 ): TelegramDraftPreview {
   const { maxLines, maxLineChars } = options;
   const activity =
@@ -138,7 +150,14 @@ export function renderTelegramProgressDraftPreview(
   if (visibleLines.length) {
     addParagraph(
       joinProgressText(
-        visibleLines.map((line) => progressLineText(line, maxLineChars)),
+        visibleLines.map((line) =>
+          progressLineText(
+            line,
+            typeof line !== "string" && line.commandBearing
+              ? (options.commandMaxLineChars ?? maxLineChars)
+              : maxLineChars,
+          ),
+        ),
         "\n",
       ),
     );
@@ -177,4 +196,21 @@ export function renderTelegramProgressDraftPreview(
   return options.richMessages
     ? { text: plan.plainText, richMessage: plan.richMessage, complete: true }
     : { text: html.join("<br>"), parseMode: "HTML", complete: true };
+}
+
+/** Keep live drafts and adopted snapshot edits on the same account settings. */
+export function renderTelegramProgressDraftPreviewForAccount(
+  snapshot: ChannelProgressDraftCompositorSnapshot,
+  config: TelegramAccountConfig,
+  toolProgress?: boolean,
+): TelegramDraftPreview {
+  const mode = resolveTelegramPreviewStreamMode(config);
+  return renderTelegramProgressDraftPreview(snapshot, {
+    richMessages: config.richMessages === true,
+    toolProgress:
+      toolProgress ?? resolveChannelStreamingPreviewToolProgress(config, mode !== "progress", mode),
+    maxLines: resolveChannelProgressDraftMaxLines(config),
+    maxLineChars: resolveChannelProgressDraftMaxLineChars(config),
+    commandMaxLineChars: resolveChannelProgressDraftConfig(config).commandMaxLineChars,
+  });
 }
