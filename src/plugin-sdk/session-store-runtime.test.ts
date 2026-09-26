@@ -10,6 +10,7 @@ import {
   patchSessionEntryCore as patchInternalSessionEntry,
   replaceSessionEntry as replaceInternalSessionEntry,
 } from "../config/sessions/session-accessor.js";
+import { observeSessionMaintenanceCompletion } from "../config/sessions/session-accessor.sqlite-maintenance.test-support.js";
 import type * as ConfigSessionTypes from "../config/sessions/types.js";
 import {
   cleanupSessionLifecycleArtifacts,
@@ -31,6 +32,7 @@ import {
 
 type InternalSessionEntry = ConfigSessionTypes.InternalSessionEntry;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
 const LEGACY_TRANSCRIPT_INSPECTION_MAX_BYTES = 16 * 1024 * 1024;
 const sessionEntryKeepsRecoveryPrivate: "mainRestartRecovery" extends keyof SessionEntry
   ? false
@@ -60,6 +62,24 @@ describe("session-store-runtime compatibility surface", () => {
       replaceEntry: true,
       skipMaintenance: true,
     });
+  }
+
+  async function seedRecoveringSession(
+    sessionKey: string,
+    sessionId: string,
+    targetStorePath = storePath,
+  ) {
+    const entry: InternalSessionEntry = {
+      abortedLastRun: true,
+      mainRestartRecovery: { chargedAttempts: 1, cycleId: "rotation-cycle", revision: 1 },
+      restartRecoveryRuns: [{ lifecycleGeneration: "rotation-generation", runId: "rotation-run" }],
+      sessionId,
+      updatedAt: 10,
+    };
+    await replaceInternalSessionEntry(
+      { agentId: "main", sessionKey, storePath: targetStorePath },
+      entry,
+    );
   }
 
   function assignOwner(sessionKey: string): void {
@@ -691,41 +711,8 @@ describe("session-store-runtime compatibility surface", () => {
     const patchKey = "agent:main:telegram:direct:patch-rotation";
     const upsertKey = "agent:main:telegram:direct:upsert-rotation";
     const upsertStorePath = path.join(tempDir, "upsert-sessions.json");
-    const mainRestartRecovery = {
-      chargedAttempts: 1,
-      cycleId: "rotation-cycle",
-      revision: 1,
-    };
-    await seedSessionEntry(patchKey, {
-      abortedLastRun: true,
-      restartRecoveryRuns: [{ lifecycleGeneration: "patch-generation", runId: "patch-run" }],
-      sessionId: "patch-before",
-      updatedAt: 10,
-    });
-    await patchInternalSessionEntry(
-      { agentId: "main", sessionKey: patchKey, storePath },
-      () =>
-        ({
-          abortedLastRun: true,
-          mainRestartRecovery,
-          restartRecoveryRuns: [{ lifecycleGeneration: "patch-generation", runId: "patch-run" }],
-        }) as Partial<InternalSessionEntry>,
-    );
-    await upsertSessionEntry({
-      agentId: "main",
-      entry: { sessionId: "upsert-before", updatedAt: 10 },
-      sessionKey: upsertKey,
-      storePath: upsertStorePath,
-    });
-    await patchInternalSessionEntry(
-      { agentId: "main", sessionKey: upsertKey, storePath: upsertStorePath },
-      () =>
-        ({
-          abortedLastRun: true,
-          mainRestartRecovery,
-          restartRecoveryRuns: [{ lifecycleGeneration: "upsert-generation", runId: "upsert-run" }],
-        }) as Partial<InternalSessionEntry>,
-    );
+    await seedRecoveringSession(patchKey, "patch-before");
+    await seedRecoveringSession(upsertKey, "upsert-before", upsertStorePath);
 
     await patchSessionEntry({
       replaceEntry: true,
@@ -756,41 +743,8 @@ describe("session-store-runtime compatibility surface", () => {
     const patchKey = "agent:main:telegram:direct:patch-rotation";
     const updateKey = "agent:main:telegram:direct:update-rotation";
     const updateStorePath = path.join(tempDir, "update-patch-sessions.json");
-    const mainRestartRecovery = {
-      chargedAttempts: 1,
-      cycleId: "rotation-cycle",
-      revision: 1,
-    };
-    await seedSessionEntry(patchKey, {
-      abortedLastRun: true,
-      restartRecoveryRuns: [{ lifecycleGeneration: "patch-generation", runId: "patch-run" }],
-      sessionId: "patch-before",
-      updatedAt: 10,
-    });
-    await upsertSessionEntry({
-      agentId: "main",
-      entry: { sessionId: "update-before", updatedAt: 10 },
-      sessionKey: updateKey,
-      storePath: updateStorePath,
-    });
-    await patchInternalSessionEntry(
-      { agentId: "main", sessionKey: patchKey, storePath },
-      () =>
-        ({
-          abortedLastRun: true,
-          mainRestartRecovery,
-          restartRecoveryRuns: [{ lifecycleGeneration: "patch-generation", runId: "patch-run" }],
-        }) as Partial<InternalSessionEntry>,
-    );
-    await patchInternalSessionEntry(
-      { agentId: "main", sessionKey: updateKey, storePath: updateStorePath },
-      () =>
-        ({
-          abortedLastRun: true,
-          mainRestartRecovery,
-          restartRecoveryRuns: [{ lifecycleGeneration: "update-generation", runId: "update-run" }],
-        }) as Partial<InternalSessionEntry>,
-    );
+    await seedRecoveringSession(patchKey, "patch-before");
+    await seedRecoveringSession(updateKey, "update-before", updateStorePath);
 
     await patchSessionEntry({
       sessionKey: patchKey,
@@ -810,6 +764,120 @@ describe("session-store-runtime compatibility surface", () => {
       sessionId: "update-after",
       sessionKey: updateKey,
       storePath: updateStorePath,
+    });
+  });
+
+  it.each([
+    { pruneAfterMs: 7 * DAY_MS, archivedAt: expect.any(Number) },
+    { pruneAfterMs: 0, archivedAt: undefined },
+  ])(
+    "applies age retention $pruneAfterMs through entry patches",
+    async ({ pruneAfterMs, archivedAt }) => {
+      const staleSessionKey = "agent:main:stale";
+      const activeSessionKey = "agent:main:active";
+      const now = Date.now();
+      const staleEntry = { sessionId: "session-stale", updatedAt: now - 8 * DAY_MS };
+      await seedSessionEntry(staleSessionKey, staleEntry);
+      await seedSessionEntry(activeSessionKey, { sessionId: "session-active", updatedAt: now });
+      assignOwner(staleSessionKey);
+
+      const done = observeSessionMaintenanceCompletion(path.join(tempDir, "openclaw-agent.sqlite"));
+      await patchSessionEntry({
+        sessionKey: activeSessionKey,
+        storePath,
+        maintenanceConfig: {
+          mode: "enforce",
+          pruneAfterMs,
+          modelRunPruneAfterMs: DAY_MS,
+          maxEntries: 100,
+          resetArchiveRetentionMs: 7 * DAY_MS,
+          maxDiskBytes: null,
+          highWaterBytes: null,
+        },
+        update: () => ({ model: "gpt-5.5" }),
+      });
+
+      await done;
+      const retainedEntry = getSessionEntry({ sessionKey: staleSessionKey, storePath });
+      expect(retainedEntry?.archivedAt).toEqual(archivedAt);
+      expect(retainedEntry).toMatchObject(staleEntry);
+      const activeEntry = getSessionEntry({ sessionKey: activeSessionKey, storePath });
+      expect(activeEntry).toMatchObject({ sessionId: "session-active", model: "gpt-5.5" });
+      expect(activeEntry?.archivedAt).toBeUndefined();
+    },
+  );
+
+  it("forwards maintenance suppression through entry patches", async () => {
+    const staleSessionKey = "agent:main:stale";
+    const activeSessionKey = "agent:main:active";
+    const now = Date.now();
+    await seedSessionEntry(staleSessionKey, {
+      sessionId: "session-stale",
+      updatedAt: now - 8 * DAY_MS,
+    });
+    await seedSessionEntry(activeSessionKey, {
+      sessionId: "session-active",
+      updatedAt: now,
+    });
+
+    await patchSessionEntry({
+      sessionKey: activeSessionKey,
+      storePath,
+      maintenanceConfig: {
+        mode: "enforce",
+        pruneAfterMs: 7 * DAY_MS,
+        modelRunPruneAfterMs: DAY_MS,
+        maxEntries: 1,
+        resetArchiveRetentionMs: 7 * DAY_MS,
+        maxDiskBytes: null,
+        highWaterBytes: null,
+      },
+      requireWriteSuccess: true,
+      skipMaintenance: true,
+      update: () => ({ model: "gpt-5.5" }),
+    });
+
+    expect(getSessionEntry({ sessionKey: staleSessionKey, storePath })).toMatchObject({
+      sessionId: "session-stale",
+    });
+  });
+
+  it("accepts pre-model-run maintenance configs through entry patches", async () => {
+    const staleModelRunKey = "agent:main:explicit:model-run-123e4567-e89b-12d3-a456-426614174000";
+    const activeSessionKey = "agent:main:active";
+    const now = Date.now();
+    await seedSessionEntry(staleModelRunKey, {
+      sessionId: "session-probe",
+      updatedAt: now - 2 * DAY_MS,
+    });
+    await seedSessionEntry(activeSessionKey, {
+      sessionId: "session-active",
+      updatedAt: now,
+    });
+
+    const legacyMaintenanceConfig = {
+      mode: "enforce" as const,
+      pruneAfterMs: 7 * DAY_MS,
+      maxEntries: 500,
+      resetArchiveRetentionMs: 7 * DAY_MS,
+      maxDiskBytes: null,
+      highWaterBytes: null,
+    };
+
+    await expect(
+      patchSessionEntry({
+        sessionKey: activeSessionKey,
+        storePath,
+        maintenanceConfig: legacyMaintenanceConfig,
+        update: () => ({ model: "gpt-5.5" }),
+      }),
+    ).resolves.toMatchObject({
+      model: "gpt-5.5",
+      sessionId: "session-active",
+    });
+
+    expect(getSessionEntry({ sessionKey: staleModelRunKey, storePath })).toMatchObject({
+      sessionId: "session-probe",
     });
   });
 

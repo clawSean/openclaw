@@ -1,3 +1,4 @@
+import { isIncognitoTask, projectTaskContentForPersistence } from "./task-content.js";
 import {
   appendTaskEvent,
   normalizeTaskStatus,
@@ -13,53 +14,19 @@ import {
 } from "./task-registry-records.js";
 import {
   isTerminalTaskStatus,
-  type JsonValue,
-  type TaskDeliveryStatus,
   type TaskEventRecord,
   type TaskRecord,
   type TaskExecutionOwner,
   type TaskPersistenceReceipt,
-  type TaskRuntime,
-  type TaskStatus,
-  type TaskTerminalOutcome,
+  type TaskRunStateTransitionParams,
+  type TaskRunTransition,
 } from "./task-registry.types.js";
 
-export type TaskRunStateTransitionParams = {
-  runId: string;
-  taskId?: string;
-  runtime?: TaskRuntime;
-  sessionKey?: string;
-  childSessionKey?: string | null;
-  status?: TaskStatus;
-  startedAt?: number;
-  endedAt?: number;
-  lastEventAt?: number;
-  error?: string;
-  clearError?: boolean;
-  progressSummary?: string | null;
-  terminalSummary?: string | null;
-  preserveTerminalSummary?: boolean;
-  terminalOutcome?: TaskTerminalOutcome | null;
-  detail?: JsonValue;
-  eventSummary?: string | null;
-  suppressDelivery?: boolean;
-};
-
-type TaskRunDeliveryTransitionParams = {
-  runId: string;
-  runtime?: TaskRuntime;
-  sessionKey?: string;
-  deliveryStatus: TaskDeliveryStatus;
-  error?: string;
-};
-
-export type TaskRunTransition =
-  | { kind: "state"; params: TaskRunStateTransitionParams }
-  | { kind: "delivery"; params: TaskRunDeliveryTransitionParams };
+export class TaskRunTransitionUnsettledError extends Error {}
 
 type TaskRunOwnerTransition = {
   kind: "run-owner";
-  params: { runId: string; executionOwner?: TaskExecutionOwner };
+  params: { runId: string; executionOwner?: TaskExecutionOwner; clearLastToolName?: true };
 };
 
 type TaskRecordSelection = {
@@ -121,10 +88,13 @@ export function prepareTaskRecordUpdate(
 }
 
 function prepareStateTransition(
-  current: TaskRecord,
-  params: TaskRunStateTransitionParams,
+  currentInput: TaskRecord,
+  transitionInput: TaskRunStateTransitionParams,
   now: number,
 ) {
+  const incognito = isIncognitoTask(currentInput) || isIncognitoTask(transitionInput);
+  const current = projectTaskContentForPersistence(incognito, currentInput);
+  const params = projectTaskContentForPersistence(incognito, transitionInput);
   const patch: Partial<TaskRecord> = {};
   const nextStatus = params.status ? normalizeTaskStatus(params.status) : current.status;
   if (
@@ -220,10 +190,18 @@ function prepareTaskRecordTransition(
 ): TaskRecordTransitionReceipt | null {
   if (input.kind === "run-owner") {
     return {
-      ...(current.status === "running" && input.params.executionOwner
+      ...(current.status === "running" &&
+      (input.params.executionOwner || input.params.clearLastToolName)
         ? prepareTaskRecordUpdate(
             current,
-            { executionOwner: input.params.executionOwner },
+            {
+              ...(input.params.executionOwner
+                ? { executionOwner: input.params.executionOwner }
+                : {}),
+              ...(input.params.clearLastToolName
+                ? { lastToolName: undefined, lastEventAt: input.now }
+                : {}),
+            },
             input.now,
           )
         : { previous: current, task: current, persisted: false, becomesTerminal: false }),
