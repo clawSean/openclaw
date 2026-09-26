@@ -266,7 +266,7 @@ function describeIMessageInboundDropDiagnostic(params: {
       : "unknown";
   const mentionHint =
     params.reason === "no mention"
-      ? ` Mention the agent (default patterns come from its identity name/emoji), or set ${params.groupsConfigPath}["${params.message.chat_id}"].requireMention=false. Preserve existing groups entries; when adding the first groups map, include "*": {} to keep other chats admitted.`
+      ? ` Mention the agent (default patterns come from its identity name/emoji). If the owner saved /activation mention, use /activation always to allow unmentioned messages; saved activation overrides group config. Otherwise set ${params.groupsConfigPath}["${params.message.chat_id}"].requireMention=false. Preserve existing groups entries; when adding the first groups map, include "*": {} to keep other chats admitted.`
       : "";
   return (
     `imessage: dropped inbound message account=${params.accountId} reason=${JSON.stringify(

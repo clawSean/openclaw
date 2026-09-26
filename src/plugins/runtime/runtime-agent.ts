@@ -91,7 +91,10 @@ function getSessionEntry(params: RuntimeSessionStoreReadParams): SessionEntry | 
 }
 
 async function getSessionEntryInWorker(
-  params: RuntimeSessionStoreReadParams & { agentId: string; storePath: string },
+  params: Pick<RuntimeSessionStoreReadParams, "sessionKey" | "env"> & {
+    agentId: string;
+    storePath: string;
+  },
 ): Promise<SessionEntry | undefined> {
   const result = await readSessionEntriesFromStoreInWorker({
     agentId: params.agentId,
