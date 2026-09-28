@@ -17,6 +17,11 @@ export type SharedCodexAppServerClientEntry = {
   closeError?: Error;
   startupAbort?: AbortController;
   onStartedClientCallbacks: Set<(client: CodexAppServerClient) => void>;
+  idleRetirement?: {
+    timeoutMs: number;
+    canRetire: (client: CodexAppServerClient) => boolean;
+    timer?: ReturnType<typeof setTimeout>;
+  };
 };
 
 export type SharedCodexAppServerClientStartup = {
@@ -106,6 +111,61 @@ export function getCurrentSharedClientEntry(
     : undefined;
 }
 
+function clearSharedClientIdleRetirementTimer(entry: SharedCodexAppServerClientEntry): void {
+  const policy = entry.idleRetirement;
+  if (policy?.timer) {
+    clearTimeout(policy.timer);
+    policy.timer = undefined;
+  }
+}
+
+export function cancelSharedClientIdleRetirement(entry: SharedCodexAppServerClientEntry): void {
+  clearSharedClientIdleRetirementTimer(entry);
+  entry.idleRetirement = undefined;
+}
+
+function scheduleSharedClientIdleRetirement(entry: SharedCodexAppServerClientEntry): void {
+  clearSharedClientIdleRetirementTimer(entry);
+  const policy = entry.idleRetirement;
+  if (
+    !policy ||
+    entry.activeLeases > 0 ||
+    entry.pendingAcquires > 0 ||
+    entry.closeWhenIdle ||
+    !entry.client
+  ) {
+    return;
+  }
+  policy.timer = setTimeout(() => {
+    policy.timer = undefined;
+    const client = entry.client;
+    if (!client || entry.idleRetirement !== policy) {
+      return;
+    }
+    if (entry.activeLeases > 0 || entry.pendingAcquires > 0 || !policy.canRetire(client)) {
+      scheduleSharedClientIdleRetirement(entry);
+      return;
+    }
+    retireSharedCodexAppServerClientIfCurrent(client);
+  }, policy.timeoutMs);
+  policy.timer.unref?.();
+}
+
+/** Bounds a reusable shared client after its final lease and native thread owner drain. */
+export function armSharedCodexAppServerClientIdleRetirement(
+  client: CodexAppServerClient,
+  options: { timeoutMs: number; canRetire: (client: CodexAppServerClient) => boolean },
+): boolean {
+  const entry = getCurrentSharedClientEntry(client);
+  if (!entry) {
+    return false;
+  }
+  clearSharedClientIdleRetirementTimer(entry);
+  entry.idleRetirement = options;
+  scheduleSharedClientIdleRetirement(entry);
+  return true;
+}
+
 /**
  * Retires a matching shared client. Default is graceful: detach from the map
  * (future acquisitions get a fresh client) and close once leases drain.
@@ -131,6 +191,7 @@ export function retireSharedCodexAppServerClientIfCurrent(
   if (currentEntry) {
     state.clients.delete(entry.key);
     entry.closeWhenIdle = true;
+    cancelSharedClientIdleRetirement(entry);
   }
   // Detached entries still own explicit native-subagent retains and remember
   // forced closure after the physical client has been cleared.
@@ -275,6 +336,7 @@ export function retainSharedClientEntry(
   counter: "activeLeases" | "pendingAcquires" = "activeLeases",
 ): () => void {
   let released = false;
+  clearSharedClientIdleRetirementTimer(entry);
   entry[counter] += 1;
   return () => {
     if (released) {
@@ -291,5 +353,6 @@ export function releaseSharedClientEntry(
 ): void {
   entry[counter] -= 1;
   closeRetiredSharedClientEntryIfIdle(entry);
+  scheduleSharedClientIdleRetirement(entry);
   notifyDesktopGenerationDrainChecks(getSharedCodexAppServerClientState());
 }

@@ -35,6 +35,7 @@ import {
 import { resolveCodexAppServerUserHomeDir } from "./auth-start-options.js";
 import {
   ensureCodexAppServerClientRuntime,
+  hasCodexAppServerSiblingThreadWork,
   recordCodexAppServerAuthHandoff,
 } from "./client-runtime.js";
 import {
@@ -66,6 +67,8 @@ import { acquireCodexNativeConfigFence } from "./native-config-fence.js";
 import { nativeHookRelayUnregisterQueue } from "./native-hook-relay-state.js";
 import { createCodexResponsesOAuth, isCodexResponsesOAuth } from "./responses-oauth.js";
 import {
+  armSharedCodexAppServerClientIdleRetirement,
+  cancelSharedClientIdleRetirement,
   notifyDesktopGenerationDrainChecks,
   retainSharedClientEntry,
   releaseSharedClientEntry,
@@ -120,6 +123,7 @@ type CodexAppServerClientStartupOptions = Omit<
   };
 
 const CODEX_APP_SERVER_INITIALIZE_TIMEOUT_MESSAGE = "codex app-server initialize timed out";
+const CODEX_APP_SERVER_CATALOG_CLIENT_IDLE_TIMEOUT_MS = 30 * 60_000;
 
 async function prepareCodexAppServerClient(options?: CodexAppServerClientOptions) {
   const lifetime = getSharedCodexAppServerClientState().startup;
@@ -793,6 +797,7 @@ function createSharedCodexAppServerClientStartup(
         client.addCloseHandler((closedClient) => {
           const entry = getCurrentSharedClientEntry(closedClient);
           if (entry) {
+            cancelSharedClientIdleRetirement(entry);
             state.clients.delete(entry.key);
           }
         });
@@ -1191,6 +1196,9 @@ export function resetSharedCodexAppServerClientForTests(): void {
   const state = getSharedCodexAppServerClientState();
   state.startup.controller.abort();
   state.startup = createCodexAppServerStartupLifetime();
+  for (const entry of state.clients.values()) {
+    cancelSharedClientIdleRetirement(entry);
+  }
   const clients = [...state.liveClients];
   const isolatedClients = [...state.isolatedClients];
   state.clients.clear();
@@ -1214,6 +1222,7 @@ export function clearSharedCodexAppServerClientIfCurrent(
   if (!entry) {
     return false;
   }
+  cancelSharedClientIdleRetirement(entry);
   state.clients.delete(entry.key);
   client.close();
   return true;
@@ -1226,6 +1235,16 @@ export function captureSharedCodexAppServerCatalogLifetime(
   const isCurrent = captureSharedClientRegistration(client);
   const revision = client.getModelCatalogRevision();
   return () => isCurrent() && client.getModelCatalogRevision() === revision;
+}
+
+/** Discovery starts local clients eagerly; retire them after shared and thread work drains. */
+export function armSharedCodexAppServerCatalogClientIdleRetirement(
+  client: CodexAppServerClient,
+): boolean {
+  return armSharedCodexAppServerClientIdleRetirement(client, {
+    timeoutMs: CODEX_APP_SERVER_CATALOG_CLIENT_IDLE_TIMEOUT_MS,
+    canRetire: (candidate) => !hasCodexAppServerSiblingThreadWork(candidate),
+  });
 }
 
 /** Registration ends on retirement even when sibling leases keep the process alive. */
@@ -1365,6 +1384,7 @@ export async function clearSharedCodexAppServerClientIfCurrentAndWait(
   if (!entry) {
     return false;
   }
+  cancelSharedClientIdleRetirement(entry);
   state.clients.delete(entry.key);
   await client.closeAndWait(options);
   return true;
@@ -1377,6 +1397,9 @@ export async function clearSharedCodexAppServerClientAndWait(options?: {
   const state = getSharedCodexAppServerClientState();
   const lifetime = state.startup;
   lifetime.controller.abort();
+  for (const entry of state.clients.values()) {
+    cancelSharedClientIdleRetirement(entry);
+  }
   state.clients.clear();
   const closing = Promise.all(
     [...state.liveClients].map((client) => ownCodexStartup(lifetime, client.closeAndWait(options))),
@@ -1442,6 +1465,7 @@ function closeSharedClientEntryIfUnclaimed(entry: SharedCodexAppServerClientEntr
   if (state.clients.get(entry.key) !== entry) {
     return false;
   }
+  cancelSharedClientIdleRetirement(entry);
   state.clients.delete(entry.key);
   entry.client?.close();
   return Boolean(entry.client);

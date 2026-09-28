@@ -668,7 +668,7 @@ export function isCodexAppServerLiveThreadClaimed(
 
 export function hasCodexAppServerSiblingThreadWork(
   client: CodexAppServerClient,
-  threadId: string,
+  threadId?: string,
 ): boolean {
   return hasSiblingThreadWork(configuredClients.get(client), threadId);
 }

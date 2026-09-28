@@ -17,7 +17,10 @@ import { probeCodexNativeAuth } from "./native-auth.js";
 import type { CodexGetAccountResponse } from "./protocol.js";
 import { withCodexAppServerJsonClient } from "./request.js";
 import { isCodexResponsesOAuthCredential } from "./responses-oauth.js";
-import { captureSharedCodexAppServerCatalogLifetime } from "./shared-client.js";
+import {
+  armSharedCodexAppServerCatalogClientIdleRetirement,
+  captureSharedCodexAppServerCatalogLifetime,
+} from "./shared-client.js";
 
 type ModelInputType = NonNullable<ModelCatalogEntry["input"]>[number];
 const INPUT_TYPES: ReadonlySet<string> = new Set(["text", "image", "audio", "video", "document"]);
@@ -141,6 +144,9 @@ export function createCodexAppServerModelCatalog(runtime: string) {
         },
         async (request, client) => {
           const isCurrent = captureSharedCodexAppServerCatalogLifetime(client);
+          if (ownsLocalProcess) {
+            armSharedCodexAppServerCatalogClientIdleRetirement(client);
+          }
           const listed = await listAllCodexAppServerModels({
             request,
             limit: 100,

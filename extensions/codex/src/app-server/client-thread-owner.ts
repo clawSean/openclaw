@@ -96,10 +96,18 @@ export function hasThreadOwnership(
 
 export function hasSiblingThreadWork(
   runtime: ThreadOwnershipState | undefined,
-  threadId: string,
+  threadId?: string,
 ): boolean {
   if (!runtime || runtime.closed) {
     return false;
+  }
+  if (threadId === undefined) {
+    return (
+      runtime.retainedThreads.size > 0 ||
+      runtime.claimedThreads.size > 0 ||
+      runtime.releasingThreads.size > 0 ||
+      runtime.protectedThreads.size > 0
+    );
   }
   // A protected parent can be settled while its native children still write.
   if (runtime.protectedThreads.size > 0) {

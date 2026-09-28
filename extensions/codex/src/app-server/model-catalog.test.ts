@@ -24,7 +24,12 @@ vi.mock("./auth-profile.js", async () => {
   });
 });
 
-const rpc = vi.hoisted(() => ({ request: vi.fn(), epoch: 0, client: {} }));
+const rpc = vi.hoisted(() => ({
+  request: vi.fn(),
+  epoch: 0,
+  client: {},
+  armIdleRetirement: vi.fn(),
+}));
 vi.mock("./request.js", () => ({
   withCodexAppServerJsonClient: vi.fn(
     (_options: unknown, run: (request: unknown, client: unknown) => unknown) =>
@@ -32,6 +37,7 @@ vi.mock("./request.js", () => ({
   ),
 }));
 vi.mock("./shared-client.js", () => ({
+  armSharedCodexAppServerCatalogClientIdleRetirement: rpc.armIdleRetirement,
   captureSharedCodexAppServerCatalogLifetime: () => {
     const epoch = rpc.epoch;
     return () => rpc.epoch === epoch;
@@ -67,6 +73,7 @@ describe("Codex app-server model catalog", () => {
     });
     listModelsMock.mockReset();
     vi.mocked(withCodexAppServerJsonClient).mockClear();
+    rpc.armIdleRetirement.mockReset();
     rpc.epoch += 1;
     rpc.request
       .mockReset()
@@ -132,6 +139,7 @@ describe("Codex app-server model catalog", () => {
       "agent",
     );
     expect(probeCodexNativeAuth).not.toHaveBeenCalled();
+    expect(rpc.armIdleRetirement).toHaveBeenCalledExactlyOnceWith(rpc.client);
   });
 
   it("returns no rows without a live call when discovery is disabled", async () => {
@@ -139,6 +147,15 @@ describe("Codex app-server model catalog", () => {
       await loadCodexAppServerModelCatalog(catalogParams, { discovery: { enabled: false } }),
     ).toEqual([]);
     expect(listModelsMock).not.toHaveBeenCalled();
+  });
+
+  it("arms local idle retirement even when discovery fails", async () => {
+    listModelsMock.mockRejectedValue(new Error("synthetic discovery failure"));
+
+    await expect(loadCodexAppServerModelCatalog(catalogParams, undefined)).rejects.toThrow(
+      "synthetic discovery failure",
+    );
+    expect(rpc.armIdleRetirement).toHaveBeenCalledExactlyOnceWith(rpc.client);
   });
 
   it.each([
@@ -263,6 +280,7 @@ describe("Codex app-server model catalog", () => {
         ),
       ).toEqual({ accountType: "apiKey", authMode: "api_key" });
       expect(probeCodexNativeAuth).not.toHaveBeenCalled();
+      expect(rpc.armIdleRetirement).not.toHaveBeenCalled();
     },
   );
 
