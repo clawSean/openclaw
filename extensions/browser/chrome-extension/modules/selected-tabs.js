@@ -5,6 +5,7 @@ import {
 
 const EXPLICIT_SELECTED_TAB_IDS_KEY = "explicitSelectedTabIdsV1";
 const EXPLICIT_SELECTED_TAB_BACKEND_KEY = "explicitSelectedTabBackendV1";
+const EXPLICIT_SELECTED_TAB_MUTATION_KEY = "explicitSelectedTabMutationV1";
 const MAX_EXPLICIT_SELECTED_TABS = 256;
 const REPLACEMENT_TAB_ATTEMPTS = 8;
 const REPLACEMENT_TAB_RETRY_MS = 50;
@@ -40,7 +41,10 @@ export function createSelectedTabsController({ chromeApi = chrome, getGroupColor
     if (!readyPromise) {
       readyPromise = (async () => {
         const [backendResult, idsResult] = await Promise.allSettled([
-          chromeApi.storage.local.get([EXPLICIT_SELECTED_TAB_BACKEND_KEY]),
+          chromeApi.storage.local.get([
+            EXPLICIT_SELECTED_TAB_BACKEND_KEY,
+            EXPLICIT_SELECTED_TAB_MUTATION_KEY,
+          ]),
           chromeApi.storage.session.get([EXPLICIT_SELECTED_TAB_IDS_KEY]),
         ]);
         if (backendResult.status === "rejected") {
@@ -52,6 +56,14 @@ export function createSelectedTabsController({ chromeApi = chrome, getGroupColor
         }
         backendMarkerPersisted = backendResult.value?.[EXPLICIT_SELECTED_TAB_BACKEND_KEY] === true;
         explicitSelection = backendMarkerPersisted;
+        if (backendResult.value?.[EXPLICIT_SELECTED_TAB_MUTATION_KEY] === true) {
+          // A prior ledger write did not commit completely. Ignore its session
+          // value until a fresh explicit share replaces it successfully.
+          explicitSelection = true;
+          selectedTabIds.clear();
+          sessionStorageAvailable = false;
+          return;
+        }
         if (idsResult.status === "rejected") {
           if (explicitSelection) {
             selectedTabIds.clear();
@@ -84,8 +96,19 @@ export function createSelectedTabsController({ chromeApi = chrome, getGroupColor
       throw new Error(STORAGE_ERROR);
     }
     try {
+      // Persist a restart-visible denial before touching the session ledger.
+      // If either following write fails, a new worker ignores the stale ids.
+      await chromeApi.storage.local.set({ [EXPLICIT_SELECTED_TAB_MUTATION_KEY]: true });
       await chromeApi.storage.session.set({ [EXPLICIT_SELECTED_TAB_IDS_KEY]: [...nextIds] });
+      await chromeApi.storage.local.remove([EXPLICIT_SELECTED_TAB_MUTATION_KEY]);
     } catch (error) {
+      try {
+        // Prefer deleting the stale grant set as well. The persistent mutation
+        // marker remains the restart-safe denial if this cleanup also fails.
+        await chromeApi.storage.session.remove([EXPLICIT_SELECTED_TAB_IDS_KEY]);
+      } catch {
+        // The restart-visible local marker already owns fail-closed recovery.
+      }
       sessionStorageAvailable = false;
       selectedTabIds.clear();
       throw new Error(STORAGE_ERROR, { cause: error });
@@ -265,7 +288,10 @@ export function createSelectedTabsController({ chromeApi = chrome, getGroupColor
       sessionStorageAvailable = false;
       selectedTabIds.clear();
       await chromeApi.storage.session.remove([EXPLICIT_SELECTED_TAB_IDS_KEY]);
-      await chromeApi.storage.local.remove([EXPLICIT_SELECTED_TAB_BACKEND_KEY]);
+      await chromeApi.storage.local.remove([
+        EXPLICIT_SELECTED_TAB_BACKEND_KEY,
+        EXPLICIT_SELECTED_TAB_MUTATION_KEY,
+      ]);
       backendMarkerPersisted = false;
       explicitSelection = false;
       sessionStorageAvailable = true;

@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSelectedTabsController } from "./selected-tabs.js";
+import { createTabAccessPolicy } from "./tab-access.js";
 
 const EXPLICIT_SELECTED_TAB_IDS_KEY = "explicitSelectedTabIdsV1";
 const EXPLICIT_SELECTED_TAB_BACKEND_KEY = "explicitSelectedTabBackendV1";
+const EXPLICIT_SELECTED_TAB_MUTATION_KEY = "explicitSelectedTabMutationV1";
 
 function deferred() {
   let resolve = () => {};
@@ -24,7 +26,11 @@ function createHarness({
     ? { [EXPLICIT_SELECTED_TAB_BACKEND_KEY]: true }
     : {};
   const sessionValues: Record<string, unknown> = { [EXPLICIT_SELECTED_TAB_IDS_KEY]: ids };
-  const tabs = new Map(ids.concat([3]).map((id) => [id, { id, windowId: 1, incognito: false }]));
+  const tabs = new Map(
+    ids
+      .concat([3])
+      .map((id) => [id, { id, windowId: 1, incognito: false, url: `https://example.com/${id}` }]),
+  );
   const local = {
     get: vi.fn(async (keys: string[]) =>
       Object.fromEntries(
@@ -65,6 +71,7 @@ function createHarness({
         }
         return tab;
       }),
+      query: vi.fn(async () => [...tabs.values()]),
       ungroup: vi.fn(async () => undefined),
     },
   };
@@ -173,6 +180,45 @@ describe("explicit selected-tab storage", () => {
     await expect(harness.controller.has(1)).resolves.toBe(false);
     await expect(harness.controller.has(3)).resolves.toBe(false);
     await expect(harness.controller.add(3)).rejects.toThrow("no tabs were shared");
+  });
+
+  it("keeps stale grants denied after a failed revocation write and worker restart", async () => {
+    const harness = createHarness({ explicit: true, ids: [1, 2] });
+    harness.session.set.mockRejectedValueOnce(new Error("write failed"));
+    harness.session.remove.mockRejectedValueOnce(new Error("cleanup failed"));
+
+    await expect(harness.controller.remove(1)).rejects.toThrow("no tabs were shared");
+    expect(harness.localValues).toHaveProperty(EXPLICIT_SELECTED_TAB_MUTATION_KEY, true);
+    expect(harness.sessionValues).toHaveProperty(EXPLICIT_SELECTED_TAB_IDS_KEY, [1, 2]);
+
+    const restarted = createSelectedTabsController({ chromeApi: harness.chromeApi });
+    await expect(restarted.has(1)).resolves.toBe(false);
+    await expect(restarted.isSelected({ id: 1 })).resolves.toBe(false);
+    await expect(restarted.has(2)).resolves.toBe(false);
+
+    const policy = createTabAccessPolicy({
+      chromeApi: harness.chromeApi,
+      isSelectedTab: (tab) => restarted.isSelected(tab),
+    });
+    await policy.initialize("selected", true);
+    await expect(policy.listAccessibleTabs()).resolves.toEqual([]);
+    await expect(policy.requireTab(1, policy.capture(1))).rejects.toThrow(
+      "not shared with OpenClaw",
+    );
+  });
+
+  it("recovers from an interrupted ledger mutation only through a fresh explicit share", async () => {
+    const harness = createHarness({ explicit: true, ids: [1, 2] });
+    harness.localValues[EXPLICIT_SELECTED_TAB_MUTATION_KEY] = true;
+    const restarted = createSelectedTabsController({ chromeApi: harness.chromeApi });
+
+    await expect(restarted.has(1)).resolves.toBe(false);
+    await restarted.replaceWith(3);
+
+    expect(harness.sessionValues).toHaveProperty(EXPLICIT_SELECTED_TAB_IDS_KEY, [3]);
+    expect(harness.localValues).not.toHaveProperty(EXPLICIT_SELECTED_TAB_MUTATION_KEY);
+    await expect(restarted.has(1)).resolves.toBe(false);
+    await expect(restarted.has(3)).resolves.toBe(true);
   });
 
   it("adds and removes tabs without consulting tab groups after activation", async () => {
