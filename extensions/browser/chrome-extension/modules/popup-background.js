@@ -34,6 +34,7 @@ export function createPopupMessageHandler({
   addTabToOpenClawGroup,
   isTabSelected = isTabInOpenClawGroup,
   isSelectedScopeExplicit = async () => false,
+  isSelectedScopeRecoveryRequired = async () => false,
   removeTabFromSelectedScope = removeTabFromOpenClawGroup,
   addTabToSelectedScope = addTabToOpenClawGroup,
   replaceSelectedScope = addTabToOpenClawGroup,
@@ -144,31 +145,45 @@ export function createPopupMessageHandler({
 
   async function unpair() {
     pairingGeneration += 1;
-    const disabledPersisted = onUnpairStart();
+    const failures = [];
+    const attempt = async (operation) => {
+      try {
+        await operation();
+      } catch (error) {
+        failures.push(error);
+      }
+    };
+    const disabledPersisted = attempt(onUnpairStart);
     policy.setEnabled(false);
     policy.invalidateAll();
     suspendRelayConnections();
     resetRelayState();
     closeRelaySocket();
     setBadge("off");
-    await accessReady;
+    await attempt(async () => await accessReady);
     policy.setEnabled(false);
     policy.invalidateAll();
     closeRelaySocket();
     setBadge("off");
     await runAccessMutation(async () => {
       policy.setEnabled(false);
-      const detaching = detachAllDebuggerSessions();
-      await syncTabsToRelay();
+      const detaching = attempt(detachAllDebuggerSessions);
+      await attempt(syncTabsToRelay);
       await disabledPersisted;
-      await pairingConfigStore.clear();
-      await policy.clearDenied();
-      await resetSelectedScope();
+      await attempt(async () => await pairingConfigStore.clear());
+      await attempt(async () => await policy.clearDenied());
+      await attempt(async () => await resetSelectedScope());
       await detaching;
-      await discardRetiredCopilotCustody();
+      await attempt(async () => await discardRetiredCopilotCustody());
       resetRelayState();
       closeRelaySocket();
       setBadge("off");
+      if (failures.length > 0) {
+        throw new AggregateError(
+          failures,
+          `Could not fully disconnect browser automation: ${failures.map(String).join("; ")}`,
+        );
+      }
     });
     return { ok: true };
   }
@@ -192,12 +207,14 @@ export function createPopupMessageHandler({
             await reconcilePairingInvalidation();
             const accessible = await policy.listAccessibleTabs();
             const explicitSelectedTabs = await isSelectedScopeExplicit();
+            const selectedScopeRecoveryRequired = await isSelectedScopeRecoveryRequired();
             const hint = getRelayStatusHint();
             sendResponse({
               paired: Boolean(relayUrl),
               state: getRelayState(),
               accessMode,
               explicitSelectedTabs,
+              selectedScopeRecoveryRequired,
               accessibleTabCount: accessible.length,
               relayUrl: relayUrl ?? "",
               nativeBootstrap,
@@ -284,12 +301,13 @@ export function createPopupMessageHandler({
                 } else {
                   const selected = await isTabSelected(await chromeApi.tabs.get(tabId));
                   const explicit = await isSelectedScopeExplicit();
+                  const recovering = await isSelectedScopeRecoveryRequired();
                   if (!msg.grant && selected) {
                     policy.invalidateTab(tabId);
                     await detachDebugger(tabId);
                     await removeTabFromSelectedScope(tabId);
                   } else if (msg.grant && !selected) {
-                    if (explicit) {
+                    if (explicit && !recovering) {
                       policy.invalidateTab(tabId);
                       await addTabToSelectedScope(tabId);
                     } else {

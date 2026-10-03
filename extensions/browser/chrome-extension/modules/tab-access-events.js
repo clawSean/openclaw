@@ -13,6 +13,7 @@ export function registerTabAccessEvents({
   pauseTab,
   removeTabFromOpenClawGroup,
   replaceTabInSelectedScope = async () => false,
+  selectedTabsUseGroups = () => true,
   runAccessMutation,
 }) {
   let groupEventRevision = 0;
@@ -103,6 +104,30 @@ export function registerTabAccessEvents({
     }).catch(() => undefined);
   });
 
+  const onTabMoved = (tabId) => {
+    scheduleTabsSync();
+    if (!policy.observeTabMove(tabId)) {
+      return;
+    }
+    const revocation = policy.beginRevocation(tabId);
+    const detaching = Promise.resolve().then(() => detachDebugger(tabId));
+    void runAccessMutation(async () => {
+      try {
+        await accessReady;
+        const reconciled = await Promise.allSettled([detaching, removeTabFromOpenClawGroup(tabId)]);
+        const failure = reconciled.find((result) => result.status === "rejected");
+        if (failure?.status === "rejected") {
+          throw failure.reason;
+        }
+      } finally {
+        policy.endRevocation(revocation);
+        scheduleTabsSync();
+      }
+    }).catch(() => undefined);
+  };
+  chromeApi.tabs.onDetached.addListener(onTabMoved);
+  chromeApi.tabs.onAttached.addListener(onTabMoved);
+
   chromeApi.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     scheduleTabsSync();
     const generation = attachments.get(tabId);
@@ -139,25 +164,32 @@ export function registerTabAccessEvents({
   });
 
   const onGroupChanged = (group, removed = false) => {
+    if (policy.mode === ACCESS_MODE_SELECTED && !selectedTabsUseGroups()) {
+      return;
+    }
     const eventRevision = ++groupEventRevision;
     scheduleTabsSync();
     policy.invalidateGroup(group, removed);
     if (policy.mode !== ACCESS_MODE_SELECTED) {
       return;
     }
+    const eventIsCurrent = () =>
+      eventRevision === groupEventRevision &&
+      policy.mode === ACCESS_MODE_SELECTED &&
+      selectedTabsUseGroups();
     const generations = [...attachments]
       .filter(([, record]) => !record.retired)
       .map(([tabId, generation]) => [tabId, generation, policy.capture(tabId)]);
     void accessReady.then(async () => {
-      if (eventRevision !== groupEventRevision || policy.mode !== ACCESS_MODE_SELECTED) {
+      if (!eventIsCurrent()) {
         return;
       }
       await Promise.allSettled([...attachments.values()].map((record) => record.pending));
-      if (eventRevision !== groupEventRevision) {
+      if (!eventIsCurrent()) {
         return;
       }
       const selected = new Set((await policy.listAccessibleTabs()).map((tab) => tab.id));
-      if (eventRevision !== groupEventRevision) {
+      if (!eventIsCurrent()) {
         return;
       }
       await Promise.allSettled(
@@ -167,7 +199,7 @@ export function registerTabAccessEvents({
           )
           .map(([tabId]) => detachDebugger(tabId)),
       );
-      if (eventRevision !== groupEventRevision) {
+      if (!eventIsCurrent()) {
         return;
       }
       for (const [tabId, generation, epoch] of generations) {
@@ -175,7 +207,7 @@ export function registerTabAccessEvents({
           continue;
         }
         const state = await policy.inspectTab(tabId, epoch);
-        if (eventRevision !== groupEventRevision || attachments.get(tabId) !== generation) {
+        if (!eventIsCurrent() || attachments.get(tabId) !== generation) {
           return;
         }
         if (!policy.epochIsCurrent(tabId, epoch)) {
@@ -187,7 +219,7 @@ export function registerTabAccessEvents({
           generation.epoch = epoch;
         } else {
           await detachDebugger(tabId);
-          if (eventRevision !== groupEventRevision) {
+          if (!eventIsCurrent()) {
             return;
           }
         }

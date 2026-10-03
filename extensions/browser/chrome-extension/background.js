@@ -58,12 +58,24 @@ let retiredCopilotCustodyBlocked = true;
 let tabsSyncTimer = null;
 let accessMutationChain = Promise.resolve();
 const pairingConfigStore = createPairingConfigStore(chrome.storage.local);
+
+/** @param {unknown} error */
+function warnSelectedTabStorageCleanupFailure(error) {
+  console.warn("Selected-tab storage cleanup failed", error);
+}
+
 const selectedTabs = createSelectedTabsController({
   getGroupColor: async () => (await getConfig()).groupColor,
+  onAuthorityUnavailable: () => {
+    tabAccessPolicy.invalidateAll();
+    scheduleTabsSync();
+    void detachAllDebuggerSessions().catch(warnSelectedTabStorageCleanupFailure);
+  },
 });
 const tabAccessPolicy = createTabAccessPolicy({
   isSelectedTab: (tab) => selectedTabs.isSelected(tab),
   addSelectedTab: (tabId, created) => selectedTabs.add(tabId, created),
+  selectedTabsUseGroups: () => !selectedTabs.isExplicitSync(),
   getGroupColor: async () => (await getConfig()).groupColor,
 });
 const relayDebugger = createRelayDebugger({ policy: tabAccessPolicy, requireAutomationAllowed });
@@ -604,6 +616,7 @@ const handlePopupMessage = createPopupMessageHandler({
   detachDebugger,
   isTabSelected: (tab) => selectedTabs.isSelected(tab),
   isSelectedScopeExplicit: () => selectedTabs.isExplicit(),
+  isSelectedScopeRecoveryRequired: () => selectedTabs.isRecoveryRequired(),
   removeTabFromSelectedScope,
   addTabToSelectedScope: (tabId) => selectedTabs.add(tabId),
   replaceSelectedScope: (tabId) => selectedTabs.replaceWith(tabId),
@@ -628,6 +641,7 @@ registerTabAccessEvents({
   pauseTab,
   removeTabFromOpenClawGroup: removeTabFromSelectedScope,
   replaceTabInSelectedScope,
+  selectedTabsUseGroups: () => !selectedTabs.isExplicitSync(),
   runAccessMutation,
 });
 

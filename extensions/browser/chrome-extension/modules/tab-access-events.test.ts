@@ -18,6 +18,8 @@ function createHarness(
     | ((source: { tabId?: number }, method: string, params: unknown) => void)
     | undefined;
   let debuggerDetachListener: ((source: { tabId?: number }, reason: string) => void) | undefined;
+  let tabsAttachedListener: ((tabId: number) => void) | undefined;
+  let tabsDetachedListener: ((tabId: number) => void) | undefined;
   let tabsUpdatedListener:
     | ((
         tabId: number,
@@ -33,6 +35,7 @@ function createHarness(
   const send = vi.fn();
   const policy = {
     mode,
+    observeTabMove: vi.fn(() => false),
     observeTabUpdate: vi.fn(
       (_tabId: number, change: { url?: string; groupId?: number }) =>
         typeof change.url === "string" ||
@@ -71,6 +74,7 @@ function createHarness(
   });
   const pauseTab = vi.fn(async () => undefined);
   const removeTabFromOpenClawGroup = vi.fn(async () => undefined);
+  const scheduleTabsSync = vi.fn();
   const chromeApi = {
     debugger: {
       onEvent: {
@@ -85,6 +89,16 @@ function createHarness(
       },
     },
     tabs: {
+      onAttached: {
+        addListener: (listener: typeof tabsAttachedListener) => {
+          tabsAttachedListener = listener;
+        },
+      },
+      onDetached: {
+        addListener: (listener: typeof tabsDetachedListener) => {
+          tabsDetachedListener = listener;
+        },
+      },
       onRemoved: { addListener: vi.fn() },
       onReplaced: {
         addListener: (listener: typeof tabsReplacedListener) => {
@@ -114,7 +128,7 @@ function createHarness(
     attachments,
     nativeDetached: (tabId: number) => attachments.delete(tabId),
     send,
-    scheduleTabsSync: vi.fn(),
+    scheduleTabsSync,
     detachDebugger,
     pauseTab,
     removeTabFromOpenClawGroup,
@@ -123,6 +137,8 @@ function createHarness(
   if (
     !debuggerEventListener ||
     !debuggerDetachListener ||
+    !tabsAttachedListener ||
+    !tabsDetachedListener ||
     !tabsUpdatedListener ||
     !tabsReplacedListener ||
     !groupUpdatedListener
@@ -138,12 +154,15 @@ function createHarness(
     policy,
     pauseTab,
     removeTabFromOpenClawGroup,
+    scheduleTabsSync,
     send,
     setAccessible: (next: boolean) => {
       accessible = next;
     },
     tabsUpdatedListener: (tabId: number, changeInfo: { groupId?: number; url?: string }) =>
       tabsUpdatedListener?.(tabId, changeInfo, { id: tabId, ...changeInfo }),
+    tabsAttachedListener,
+    tabsDetachedListener,
     tabsReplacedListener,
   };
 }
@@ -151,6 +170,39 @@ function createHarness(
 afterEach(() => vi.unstubAllGlobals());
 
 describe("tab access event epochs", () => {
+  it.each(["attached", "detached"] as const)(
+    "invalidates pending creation identity when a tab is %s between windows",
+    (event) => {
+      const harness = createHarness();
+
+      harness[event === "attached" ? "tabsAttachedListener" : "tabsDetachedListener"](7);
+
+      expect(harness.policy.observeTabMove).toHaveBeenCalledWith(7);
+      expect(harness.scheduleTabsSync).toHaveBeenCalledOnce();
+      expect(harness.detachDebugger).not.toHaveBeenCalled();
+      expect(harness.removeTabFromOpenClawGroup).not.toHaveBeenCalled();
+    },
+  );
+
+  it("detaches and revokes a retained controlled blank moved after handoff", async () => {
+    const ready = deferred<void>();
+    const harness = createHarness("selected", ready.promise);
+    harness.policy.observeTabMove.mockReturnValueOnce(true);
+
+    harness.tabsDetachedListener(7);
+
+    expect(harness.policy.beginRevocation).toHaveBeenCalledWith(7);
+    await vi.waitFor(() => expect(harness.detachDebugger).toHaveBeenCalledWith(7));
+    expect(harness.removeTabFromOpenClawGroup).not.toHaveBeenCalled();
+
+    ready.resolve();
+    await vi.waitFor(() => {
+      expect(harness.removeTabFromOpenClawGroup).toHaveBeenCalledWith(7);
+      expect(harness.policy.endRevocation).toHaveBeenCalledOnce();
+    });
+    expect(harness.scheduleTabsSync).toHaveBeenCalledTimes(2);
+  });
+
   it("waits for stored access mode before handling Chrome's cancel revocation", async () => {
     const ready = deferred<void>();
     const harness = createHarness("selected", ready.promise);

@@ -13,6 +13,8 @@ export type TabAccessEventsChromeApi = {
     onDetach: ChromeEvent<(source: { tabId?: number }, reason: string) => void>;
   };
   tabs: {
+    onAttached: ChromeEvent<(tabId: number) => void>;
+    onDetached: ChromeEvent<(tabId: number) => void>;
     onRemoved: ChromeEvent<(tabId: number) => void>;
     onReplaced: ChromeEvent<(addedTabId: number, removedTabId: number) => void>;
     onUpdated: ChromeEvent<
@@ -42,6 +44,7 @@ export type TabAccessEventPolicy = Pick<
   | "renewTabAccess"
   | "invalidateGroup"
   | "observeTabUpdate"
+  | "observeTabMove"
   | "forgetTab"
   | "replaceTab"
 > & {
@@ -64,5 +67,6 @@ export function registerTabAccessEvents(options: {
   pauseTab(tabId: number): void | Promise<void>;
   removeTabFromOpenClawGroup(tabId: number): void | Promise<void>;
   replaceTabInSelectedScope?(addedTabId: number, removedTabId: number): boolean | Promise<boolean>;
+  selectedTabsUseGroups?(): boolean;
   runAccessMutation(task: () => void | Promise<void>): Promise<void>;
 }): void;

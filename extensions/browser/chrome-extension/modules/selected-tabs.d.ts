@@ -11,10 +11,17 @@ type CreatedTabOperation = {
   assertCurrent(): void;
 };
 
+export type SelectedTabCreationGrant = {
+  commit(): void;
+  rollback(): Promise<void>;
+};
+
 export type SelectedTabsController = {
-  add(tabId: number, created?: CreatedTabOperation): Promise<void>;
+  add(tabId: number, created?: CreatedTabOperation): Promise<SelectedTabCreationGrant | undefined>;
   has(tabId: number): Promise<boolean>;
   isExplicit(): Promise<boolean>;
+  isExplicitSync(): boolean;
+  isRecoveryRequired(): Promise<boolean>;
   isSelected(tab: BrowserTabSnapshot | null | undefined): Promise<boolean>;
   remove(tabId: number): Promise<void>;
   replaceTab(addedTabId: number, removedTabId: number): Promise<boolean>;
@@ -31,4 +38,5 @@ export function createSelectedTabsController(options: {
     };
   };
   getGroupColor?: () => string | Promise<string>;
+  onAuthorityUnavailable?: () => void;
 }): SelectedTabsController;

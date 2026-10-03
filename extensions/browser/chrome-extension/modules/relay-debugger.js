@@ -110,6 +110,11 @@ export function createRelayDebugger({ policy, requireAutomationAllowed }) {
         }
       };
     }
+    const resultFor = (record) => ({
+      targetId: record.targetId,
+      assertCurrent: capture(record.tabId),
+      detach: () => cleanup(record),
+    });
     async function attach(tabId, assertCallerCurrent, creationEpoch) {
       const epoch = creationEpoch ?? policy.capture(tabId);
       const assertAccess = () => {
@@ -122,9 +127,7 @@ export function createRelayDebugger({ policy, requireAutomationAllowed }) {
       assertAccess();
       const previous = attachments.get(tabId);
       if (previous && !previous.retired && previous.owner === isCurrent) {
-        const result = previous.pending
-          ? await previous.pending
-          : { targetId: previous.targetId, assertCurrent: capture(tabId) };
+        const result = previous.pending ? await previous.pending : resultFor(previous);
         await policy.requireTab(tabId, epoch);
         assertAccess();
         result.assertCurrent();
@@ -178,7 +181,7 @@ export function createRelayDebugger({ policy, requireAutomationAllowed }) {
         await policy.requireTab(tabId, epoch);
         assertAcquisition();
         record.epoch = epoch;
-        return { targetId: record.targetId, assertCurrent: capture(tabId) };
+        return resultFor(record);
       });
       record.pending = pending;
       try {

@@ -72,6 +72,221 @@ afterEach(async () => {
 });
 
 describe("physical tab creation authority", () => {
+  it.each(["all", "selected"] as const)(
+    "retains %s-mode group ownership when Chrome reports grouping before a rejected API callback",
+    async (mode) => {
+      const h = await setup(mode);
+      const group = h.tabsGroup.getMockImplementation()!;
+      h.tabsGroup.mockImplementationOnce(async (properties) => {
+        await group(properties);
+        throw new Error("group callback failed after commit");
+      });
+
+      await expect(h.request({ type: "createTab", url: "about:blank" })).resolves.toMatchObject({
+        type: "error",
+        message: "group callback failed after commit",
+      });
+      expect(h.tabsRemove).toHaveBeenCalledExactlyOnceWith(101);
+    },
+  );
+
+  it("ignores group metadata throughout an explicit-ledger initial-blank commit", async () => {
+    const h = await setup("selected");
+    h.unshareTab(100);
+    h.updateTab(100, { url: "https://example.com/compatibility", groupId: -1 }, false);
+    await expect(
+      sendRuntimeMessage(h, {
+        type: "toggleTabAccess",
+        tabId: 100,
+        accessMode: "selected",
+        grant: true,
+      }),
+    ).resolves.toMatchObject({ ok: true, accessible: true });
+    expect(h.sessionStorageValues.explicitSelectedTabIdsV1).toEqual([100]);
+
+    const ledgerCommit = createDeferred<void>();
+    releases.push(() => ledgerCommit.resolve());
+    const commit = h.sessionStorageSet.getMockImplementation()!;
+    h.sessionStorageSet.mockImplementationOnce(async (values) => {
+      await ledgerCommit.promise;
+      await commit(values);
+    });
+    h.tabsGroup.mockClear();
+
+    const creating = h.request({ type: "createTab", url: "about:blank" });
+    await vi.waitFor(() =>
+      expect(h.sessionStorageSet).toHaveBeenCalledWith({ explicitSelectedTabIdsV1: [100, 101] }),
+    );
+    h.updateTab(101, { groupId: 7 });
+    ledgerCommit.resolve();
+
+    await expect(creating).resolves.toMatchObject({
+      type: "result",
+      result: { tabId: 101 },
+    });
+    expect(h.tabsGroup).not.toHaveBeenCalled();
+    expect(h.sessionStorageValues.explicitSelectedTabIdsV1).toEqual([100, 101]);
+
+    h.updateTab(101, { groupId: -1 });
+    await expect(
+      h.request({ type: "cdp", tabId: 101, method: "Runtime.evaluate" }),
+    ).resolves.toMatchObject({ type: "result" });
+    expect(h.debuggerDetach).not.toHaveBeenCalled();
+  });
+
+  it("rolls back an explicit-ledger creation moved to another window during commit", async () => {
+    const h = await setup("selected");
+    h.unshareTab(100);
+    h.updateTab(100, { url: "https://example.com/compatibility", groupId: -1 }, false);
+    await expect(
+      sendRuntimeMessage(h, {
+        type: "toggleTabAccess",
+        tabId: 100,
+        accessMode: "selected",
+        grant: true,
+      }),
+    ).resolves.toMatchObject({ ok: true, accessible: true });
+
+    const ledgerCommit = createDeferred<void>();
+    releases.push(() => ledgerCommit.resolve());
+    const commit = h.sessionStorageSet.getMockImplementation()!;
+    h.sessionStorageSet.mockImplementationOnce(async (values) => {
+      await ledgerCommit.promise;
+      await commit(values);
+    });
+
+    const creating = h.request({ type: "createTab", url: "about:blank" });
+    await vi.waitFor(() =>
+      expect(h.sessionStorageSet).toHaveBeenCalledWith({ explicitSelectedTabIdsV1: [100, 101] }),
+    );
+    h.updateTab(101, { windowId: 2 });
+    ledgerCommit.resolve();
+
+    await expect(creating).resolves.toMatchObject({
+      type: "error",
+      message: "tab 101 changed during creation",
+    });
+    expect(h.sessionStorageValues.explicitSelectedTabIdsV1).toEqual([100]);
+    expect(h.debuggerAttach).not.toHaveBeenCalled();
+    expect(h.tabsRemove).not.toHaveBeenCalled();
+    await expect(
+      sendRuntimeMessage(h, { type: "getTabAccess", tabId: 100 }),
+    ).resolves.toMatchObject({ accessible: true });
+    await expect(
+      sendRuntimeMessage(h, { type: "getTabAccess", tabId: 101 }),
+    ).resolves.toMatchObject({ accessible: false });
+  });
+
+  it("rolls back and detaches an explicit-ledger creation moved during debugger attach", async () => {
+    const h = await setup("selected");
+    h.unshareTab(100);
+    h.updateTab(100, { url: "https://example.com/compatibility", groupId: -1 }, false);
+    await expect(
+      sendRuntimeMessage(h, {
+        type: "toggleTabAccess",
+        tabId: 100,
+        accessMode: "selected",
+        grant: true,
+      }),
+    ).resolves.toMatchObject({ ok: true, accessible: true });
+
+    const attach = h.debuggerAttach.getMockImplementation()!;
+    h.debuggerAttach.mockImplementationOnce(async (target, version) => {
+      await attach(target, version);
+      h.updateTab(101, { windowId: 2 }, false);
+    });
+
+    await expect(h.request({ type: "createTab", url: "about:blank" })).resolves.toMatchObject({
+      type: "error",
+      message: "tab 101 changed during creation",
+    });
+    expect(h.sessionStorageValues.explicitSelectedTabIdsV1).toEqual([100]);
+    expect(h.debuggerDetach).toHaveBeenCalledWith({ targetId: "tab-101" });
+    expect(h.tabsRemove).not.toHaveBeenCalled();
+    await expect(
+      sendRuntimeMessage(h, { type: "getTabAccess", tabId: 100 }),
+    ).resolves.toMatchObject({ accessible: true });
+    await expect(
+      sendRuntimeMessage(h, { type: "getTabAccess", tabId: 101 }),
+    ).resolves.toMatchObject({ accessible: false });
+  });
+
+  it("revokes a handed-off controlled blank moved to another window", async () => {
+    const h = await setup("selected");
+    h.unshareTab(100);
+    h.updateTab(100, { url: "https://example.com/compatibility", groupId: -1 }, false);
+    await expect(
+      sendRuntimeMessage(h, {
+        type: "toggleTabAccess",
+        tabId: 100,
+        accessMode: "selected",
+        grant: true,
+      }),
+    ).resolves.toMatchObject({ ok: true, accessible: true });
+    await h.create();
+    expect(h.sessionStorageValues.explicitSelectedTabIdsV1).toEqual([100, 101]);
+    await expect(
+      sendRuntimeMessage(h, { type: "getTabAccess", tabId: 101 }),
+    ).resolves.toMatchObject({ accessible: true });
+
+    const commandStarted = createDeferred<void>();
+    const commandFinished = createDeferred<Record<string, never>>();
+    releases.push(() => commandFinished.resolve({}));
+    h.debuggerSendCommand.mockImplementationOnce(async () => {
+      commandStarted.resolve();
+      return await commandFinished.promise;
+    });
+    const staleCommand = h.request({ type: "cdp", tabId: 101, method: "Runtime.evaluate" });
+    await commandStarted.promise;
+    const forwardedEvents = () =>
+      h
+        .frames()
+        .filter((frame) => frame.type === "cdpEvent" && frame.method === "Runtime.consoleAPICalled")
+        .length;
+    const eventsBeforeMove = forwardedEvents();
+
+    h.updateTab(101, { windowId: 2 }, false);
+    h.tabsDetachedListener?.(101);
+    h.tabsAttachedListener?.(101);
+    h.debuggerEventListener?.({ tabId: 101 }, "Runtime.consoleAPICalled", { moved: true });
+    expect(forwardedEvents()).toBe(eventsBeforeMove);
+
+    commandFinished.resolve({});
+    await expect(staleCommand).resolves.toMatchObject({
+      type: "error",
+      message: expect.stringMatching(/revoked|retired/),
+    });
+    await vi.waitFor(() => {
+      expect(h.debuggerDetach).toHaveBeenCalledExactlyOnceWith({ targetId: "tab-101" });
+      expect(h.sessionStorageValues.explicitSelectedTabIdsV1).toEqual([100]);
+    });
+    expect(h.tabsRemove).not.toHaveBeenCalled();
+    await expect(h.tabsGet(101)).resolves.toMatchObject({ id: 101, windowId: 2 });
+    await expect(
+      sendRuntimeMessage(h, { type: "getTabAccess", tabId: 101 }),
+    ).resolves.toMatchObject({ accessible: false });
+    await expect(h.request({ type: "attach", tabId: 101 })).resolves.toMatchObject({
+      type: "error",
+    });
+    await vi.waitFor(() => {
+      expect(h.frames().findLast((frame) => frame.type === "tabs")?.tabs).not.toContainEqual(
+        expect.objectContaining({ tabId: 101 }),
+      );
+    });
+
+    // Moving a handed-off controlled blank revokes its explicit grant rather
+    // than merely relying on about:blank eligibility. A later ordinary URL
+    // therefore remains denied until the user shares the tab again.
+    h.updateTab(101, { url: "https://example.com/moved", pendingUrl: undefined });
+    await expect(
+      sendRuntimeMessage(h, { type: "getTabAccess", tabId: 101 }),
+    ).resolves.toMatchObject({ accessible: false });
+    await expect(h.request({ type: "attach", tabId: 101 })).resolves.toMatchObject({
+      type: "error",
+    });
+    expect(h.sessionStorageValues.explicitSelectedTabIdsV1).toEqual([100]);
+  });
+
   it.each([
     "initial blank",
     "committed then blank",

@@ -32,6 +32,11 @@ import { assertRelayTabCreation } from "./tab-creation.test-support.js";
 
 declare const chrome: {
   runtime: { sendMessage: (message: unknown) => Promise<Record<string, unknown>> };
+  tabs: { group: (properties: { tabIds: number[] }) => Promise<number> };
+  tabGroups: {
+    query: (query: object) => Promise<Array<{ id: number; windowId: number }>>;
+    get: (id: number) => Promise<{ id: number; title: string; windowId: number }>;
+  };
 };
 
 const runE2E =
@@ -767,6 +772,77 @@ describe.runIf(runE2E)("Chrome native bootstrap Chromium E2E", () => {
               accessMode,
             });
           }
+
+          if (typeof nativeSelectedTabId !== "number") {
+            throw new Error("Compatibility-sharing proof tab id missing");
+          }
+          expect(
+            await extensionPage.evaluate(
+              async (tabId) =>
+                await chrome.runtime.sendMessage({
+                  type: "toggleTabAccess",
+                  tabId,
+                  accessMode: "selected",
+                  grant: true,
+                }),
+              nativeSelectedTabId,
+            ),
+          ).toMatchObject({ ok: true, accessible: true });
+          expect(
+            await extensionPage.evaluate(
+              async () => await chrome.runtime.sendMessage({ type: "getStatus" }),
+            ),
+          ).toMatchObject({
+            accessMode: "selected",
+            explicitSelectedTabs: true,
+            selectedScopeRecoveryRequired: false,
+          });
+
+          const nonsettlingGroupApis = await worker.evaluate(() => {
+            const groupApiProbe = { get: 0, group: 0, query: 0 };
+            const pendingGet = () => {
+              groupApiProbe.get += 1;
+              return new Promise<{ id: number; title: string; windowId: number }>(() => {});
+            };
+            const pendingGroup = () => {
+              groupApiProbe.group += 1;
+              return new Promise<number>(() => {});
+            };
+            const pendingQuery = () => {
+              groupApiProbe.query += 1;
+              return new Promise<Array<{ id: number; windowId: number }>>(() => {});
+            };
+            chrome.tabGroups.get = pendingGet;
+            chrome.tabs.group = pendingGroup;
+            chrome.tabGroups.query = pendingQuery;
+            Object.assign(globalThis, { openclawNonsettlingGroupProbe: groupApiProbe });
+            return {
+              get: chrome.tabGroups.get === pendingGet,
+              group: chrome.tabs.group === pendingGroup,
+              query: chrome.tabGroups.query === pendingQuery,
+            };
+          });
+          expect(nonsettlingGroupApis).toEqual({ get: true, group: true, query: true });
+          await assertRelayTabCreation({
+            context,
+            extensionPage,
+            dispatcher,
+            url: `http://127.0.0.1:${gatewayPort}/browser-owner-proof`,
+            accessMode: "selected",
+            accessBackend: "explicit-ledger",
+          });
+          const groupApiCalls = await worker.evaluate(
+            () =>
+              (
+                globalThis as typeof globalThis & {
+                  openclawNonsettlingGroupProbe?: { get: number; group: number; query: number };
+                }
+              ).openclawNonsettlingGroupProbe,
+          );
+          expect(groupApiCalls).toEqual({ get: 0, group: 0, query: 0 });
+          process.stderr.write(
+            `[browser-creation-e2e] ${JSON.stringify({ accessMode: "selected", accessBackend: "explicit-ledger", ungrouped: true, nonsettlingGroupApiCalls: groupApiCalls })}\n`,
+          );
         } finally {
           await extensionPage.evaluate(
             async () =>

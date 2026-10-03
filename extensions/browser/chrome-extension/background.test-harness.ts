@@ -71,6 +71,8 @@ export async function loadBackground({
   let debuggerEventListener:
     | ((source: { tabId?: number; sessionId?: string }, method: string, params?: unknown) => void)
     | undefined;
+  let tabsAttachedListener: ((tabId: number) => void) | undefined;
+  let tabsDetachedListener: ((tabId: number) => void) | undefined;
   let tabsRemovedListener: ((tabId: number) => void) | undefined;
   let tabsReplacedListener: ((addedTabId: number, removedTabId: number) => void) | undefined;
   let tabGroupUpdatedListener: ((group?: { id: number; title?: string }) => void) | undefined;
@@ -172,6 +174,17 @@ export async function loadBackground({
     nextSessionStorageSet = null;
     await pending;
     Object.assign(sessionStorageValues, values);
+  });
+  const sessionStorageRemove = vi.fn(async (keys: string[]) => {
+    if (
+      currentRetiredStorageFailureStage === "session_remove" &&
+      keys.some((key) => key.startsWith("copilot"))
+    ) {
+      throw new Error("Could not discard retired recovery state.");
+    }
+    for (const key of keys) {
+      delete sessionStorageValues[key];
+    }
   });
   const sendNativeMessage = vi.fn(async (_host: string, request: unknown) => {
     if (nativeMessage) {
@@ -321,17 +334,7 @@ export async function loadBackground({
           );
         }),
         set: sessionStorageSet,
-        remove: vi.fn(async (keys: string[]) => {
-          if (
-            currentRetiredStorageFailureStage === "session_remove" &&
-            keys.some((key) => key.startsWith("copilot"))
-          ) {
-            throw new Error("Could not discard retired recovery state.");
-          }
-          for (const key of keys) {
-            delete sessionStorageValues[key];
-          }
-        }),
+        remove: sessionStorageRemove,
       },
     },
     tabGroups: {
@@ -402,6 +405,16 @@ export async function loadBackground({
           tabsRemovedListener?.(tabId);
         }
       }),
+      onAttached: {
+        addListener: vi.fn((listener: (tabId: number) => void) => {
+          tabsAttachedListener = listener;
+        }),
+      },
+      onDetached: {
+        addListener: vi.fn((listener: (tabId: number) => void) => {
+          tabsDetachedListener = listener;
+        }),
+      },
       update: vi.fn(async () => undefined),
       onRemoved: {
         addListener: vi.fn((listener: (tabId: number) => void) => {
@@ -457,6 +470,8 @@ export async function loadBackground({
     !installedListener ||
     !messageListener ||
     !startupListener ||
+    !tabsAttachedListener ||
+    !tabsDetachedListener ||
     !tabsUpdatedListener ||
     !tabsReplacedListener
   ) {
@@ -591,6 +606,7 @@ export async function loadBackground({
     },
     startupListener,
     sessionStorageValues,
+    sessionStorageRemove,
     sessionStorageSet,
     shareTab: (tabId: number) => sharedTabIds.add(tabId),
     unshareTab: (tabId: number) => sharedTabIds.delete(tabId),
@@ -600,6 +616,8 @@ export async function loadBackground({
     tabGroupUpdatedListener,
     tabGroupRemovedListener,
     tabsCreate: chromeMock.tabs.create,
+    tabsAttachedListener,
+    tabsDetachedListener,
     tabsGet: chromeMock.tabs.get,
     tabsGroup: chromeMock.tabs.group,
     tabsQuery: chromeMock.tabs.query,

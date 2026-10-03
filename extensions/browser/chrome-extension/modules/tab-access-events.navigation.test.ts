@@ -50,6 +50,8 @@ async function createNavigationHarness(
     tabs: {
       get: vi.fn(async (_tabId: number) => tab),
       query: vi.fn(async () => [tab]),
+      onAttached: chromeEvent<[number]>(),
+      onDetached: chromeEvent<[number]>(),
       onUpdated: chromeEvent<[number, { groupId?: number; url?: string }, BrowserTabSnapshot]>(),
       onRemoved: chromeEvent<[number]>(),
       onReplaced: chromeEvent<[number, number]>(),

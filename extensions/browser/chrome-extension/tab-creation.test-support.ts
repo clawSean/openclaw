@@ -17,6 +17,7 @@ declare const chrome: {
   tabs: { query(query: object): Promise<Tab[]> };
   tabGroups: { get(id: number): Promise<{ title: string }> };
   debugger: { getTargets(): Promise<Array<{ id: string; tabId?: number }>> };
+  storage: { session: { get(keys: string[]): Promise<Record<string, unknown>> } };
 };
 
 /** Exercise route-owned creation through the relay; direct Chrome only observes the outcome. */
@@ -26,8 +27,10 @@ export async function assertRelayTabCreation(params: {
   dispatcher: ReturnType<typeof createBrowserRouteDispatcher>;
   url: string;
   accessMode: "all" | "selected";
+  accessBackend?: "group" | "explicit-ledger";
 }) {
   const { context, extensionPage, dispatcher, url, accessMode } = params;
+  const accessBackend = params.accessBackend ?? "group";
   const existingPages = await Promise.all(
     context.pages().map(async (page) => ({ page, url: page.url(), title: await page.title() })),
   );
@@ -64,6 +67,7 @@ export async function assertRelayTabCreation(params: {
     );
     const evidence = {
       accessMode,
+      accessBackend,
       requestedUrl: url,
       response: opened,
       initialUrl: created.initialUrl,
@@ -77,7 +81,7 @@ export async function assertRelayTabCreation(params: {
       unrelatedPagesUnchanged: unchanged.every(Boolean),
     };
     const artifact = path.resolve(
-      `.artifacts/browser-creation/creation-local-after-${accessMode}.json`,
+      `.artifacts/browser-creation/creation-local-after-${accessMode}-${accessBackend}.json`,
     );
     await fs.mkdir(path.dirname(artifact), { recursive: true });
     await fs.writeFile(artifact, `${JSON.stringify(evidence, null, 2)}\n`);
@@ -96,12 +100,20 @@ export async function assertRelayTabCreation(params: {
     const createdTab = newTabs[0];
     assert(createdTab);
     expect(createdTab.incognito).toBe(false);
-    expect(
-      await extensionPage.evaluate(
-        async (id) => await chrome.tabGroups.get(id),
-        createdTab.groupId,
-      ),
-    ).toMatchObject({ title: "OpenClaw" });
+    if (accessBackend === "group") {
+      expect(
+        await extensionPage.evaluate(
+          async (id) => await chrome.tabGroups.get(id),
+          createdTab.groupId,
+        ),
+      ).toMatchObject({ title: "OpenClaw" });
+    } else {
+      expect(createdTab.groupId).toBe(-1);
+      const selected = await extensionPage.evaluate(
+        async () => await chrome.storage.session.get(["explicitSelectedTabIdsV1"]),
+      );
+      expect(selected.explicitSelectedTabIdsV1).toEqual(expect.arrayContaining([createdTab.id]));
+    }
     expect(created.initialUrl).toBe("about:blank");
     const body = opened.body as { targetId: string };
     expect(opened.body).toMatchObject({
@@ -127,13 +139,15 @@ export async function assertRelayTabCreation(params: {
       artifact,
       `${JSON.stringify({ ...evidence, snapshotStatus: snapshot.status, snapshotTargetId: body.targetId }, null, 2)}\n`,
     );
-    process.stderr.write(`[browser-creation-e2e] mode=${accessMode} same-target-snapshot=200\n`);
+    process.stderr.write(
+      `[browser-creation-e2e] mode=${accessMode} backend=${accessBackend} same-target-snapshot=200\n`,
+    );
   } finally {
     context.off("page", onPage);
     await Promise.all(createdPages.map(async ({ page }) => await page.close()));
     expect(createdPages.every(({ page }) => page.isClosed())).toBe(true);
     process.stderr.write(
-      `[browser-creation-e2e] mode=${accessMode} created-pages-closed=${createdPages.length}\n`,
+      `[browser-creation-e2e] mode=${accessMode} backend=${accessBackend} created-pages-closed=${createdPages.length}\n`,
     );
   }
 }

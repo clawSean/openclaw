@@ -334,7 +334,7 @@ The daemon's stricter v2-only default is compatible with Gateway's default.
 - **All tabs** exposes every eligible ordinary tab in that Chrome profile,
   except tabs paused for the current browser session. Use **Pause on this tab**
   and **Allow on this tab** in the popup.
-- **Selected tabs** uses the **OpenClaw** tab group as the access-control
+- **Selected tabs** uses the **OpenClaw** tab group as the default access-control
   boundary. Moving a tab into the group grants access. Moving it out revokes
   access.
 
@@ -344,13 +344,23 @@ tab groups reliably. In Selected tabs mode, open the extension popup and choose
 first action replaces the previous selected scope with the active tab; later
 **Share this tab** actions can add more. Compatibility grants use session
 storage, survive extension worker restarts and tab replacement, and clear when
-the browser exits. The extension stays fail-closed if that storage cannot be
-read or written. Disconnecting the pairing restores tab-group selection for a
-future pairing.
+the browser exits. The first action writes a bounded persistent backend marker
+before changing the ledger. If that marker is rejected or times out, the switch
+aborts and the prior tab-group scope remains in effect; the popup reports that
+those tabs may remain shared. After compatibility sharing is active, each
+ledger update first records a persistent mutation guard and revokes the prior
+session ledger. If either denial succeeds, a storage error keeps replacement
+workers denied. If the browser rejects both writes, the update aborts and the
+current worker detaches all tabs, but the prior committed ledger may return if
+the extension worker restarts; the popup tells you to disconnect the pairing or
+retry. Disconnecting restores tab-group selection for a future pairing.
 
 Open the extension's Settings page to change the access mode. Switching to
 Selected tabs immediately detaches ungrouped tabs, including attaches already
-in flight. Agent-created tabs stay in the OpenClaw group in either mode.
+in flight. With the default backend, agent-created tabs join the OpenClaw group
+in either access mode. After compatibility sharing is active, agent-created
+tabs are recorded in the explicit ledger instead and remain ungrouped; that
+ledger controls their Selected-tabs access.
 
 The extension excludes incognito tabs, internal pages such as `chrome://` and
 `chrome-extension://`, and tabs without a usable current URL. `file://` access
@@ -358,7 +368,9 @@ also requires Chrome's **Allow access to file URLs** setting.
 
 An agent-created tab may start at `about:blank` while a CDP client initializes
 it before navigating. The extension allows that specific initial tab, keeps it
-in the OpenClaw group, and applies the same pause and access-mode controls.
+under the active backend (the legacy group or the explicit ledger), and applies
+the same pause and access-mode controls. Group metadata changes do not revoke an
+explicit-ledger initial blank; window identity and URL eligibility still do.
 Normal navigation keeps the tab available in either access mode.
 Existing blank tabs, manually grouped blanks, and other `about:` pages remain
 unavailable. Navigating away, replacing the tab, or restarting or reconnecting

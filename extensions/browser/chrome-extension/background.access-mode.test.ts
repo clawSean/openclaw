@@ -145,7 +145,7 @@ describe("relay command authorization", () => {
       storedConfig: config("selected"),
       initialTabs: [
         { id: 47, url: "https://example.com/shared", groupId: -1 },
-        { id: 48, url: "https://example.com/private", groupId: -1 },
+        { id: 48, url: "https://example.com/private", groupId: 7 },
       ],
     });
     harness.tabsGroup.mockRejectedValue(new Error("No group with specified id"));
@@ -184,6 +184,195 @@ describe("relay command authorization", () => {
     await expect(
       sendRuntimeMessage(harness, { type: "getTabAccess", tabId: 49 }),
     ).resolves.toMatchObject({ accessible: true });
+  });
+
+  it.each(["rejected", "never-settling"] as const)(
+    "keeps the current grouped scope after a %s first-use marker write",
+    async (failure) => {
+      const harness = await ready({
+        storedConfig: config("selected"),
+        initialTabs: [
+          { id: 50, url: "https://example.com/new", groupId: -1 },
+          { id: 51, url: "https://example.com/already-shared", groupId: 7 },
+        ],
+      });
+      harness.storageSet.mockClear();
+      if (failure === "rejected") {
+        harness.storageSet.mockRejectedValueOnce(new Error("marker rejected"));
+      } else {
+        harness.storageSet.mockImplementationOnce(() => new Promise(() => {}));
+      }
+
+      await expect(
+        sendRuntimeMessage(harness, {
+          type: "toggleTabAccess",
+          tabId: 50,
+          accessMode: "selected",
+          grant: true,
+        }),
+      ).resolves.toEqual({
+        ok: false,
+        error: expect.stringContaining("previous tab-group sharing scope is unchanged"),
+      });
+
+      expect(harness.storageValues).not.toHaveProperty("explicitSelectedTabBackendV1");
+      expect(harness.sessionStorageSet).not.toHaveBeenCalled();
+      await expect(sendRuntimeMessage(harness, { type: "getStatus" })).resolves.toMatchObject({
+        explicitSelectedTabs: false,
+        accessibleTabCount: 1,
+      });
+      await expect(
+        sendRuntimeMessage(harness, { type: "getTabAccess", tabId: 51 }),
+      ).resolves.toMatchObject({ accessible: true });
+      await expect(
+        sendRuntimeMessage(harness, { type: "getTabAccess", tabId: 50 }),
+      ).resolves.toMatchObject({ accessible: false });
+    },
+    3_000,
+  );
+
+  it("recovers a guarded selected-tab ledger through the popup action", async () => {
+    const harness = await ready({
+      storedConfig: {
+        ...config("selected"),
+        explicitSelectedTabBackendV1: true,
+        explicitSelectedTabMutationV1: true,
+      },
+      sessionConfig: { explicitSelectedTabIdsV1: [48] },
+      initialTabs: [
+        { id: 47, url: "https://example.com/recovery", groupId: -1 },
+        { id: 48, url: "https://example.com/stale", groupId: 7 },
+      ],
+    });
+
+    await expect(sendRuntimeMessage(harness, { type: "getStatus" })).resolves.toMatchObject({
+      explicitSelectedTabs: true,
+      selectedScopeRecoveryRequired: true,
+      accessibleTabCount: 0,
+    });
+    await expect(
+      sendRuntimeMessage(harness, {
+        type: "toggleTabAccess",
+        tabId: 47,
+        accessMode: "selected",
+        grant: true,
+      }),
+    ).resolves.toEqual({ ok: true, accessible: true, denied: false });
+
+    expect(harness.sessionStorageValues.explicitSelectedTabIdsV1).toEqual([47]);
+    expect(harness.storageValues).not.toHaveProperty("explicitSelectedTabMutationV1");
+    await expect(sendRuntimeMessage(harness, { type: "getStatus" })).resolves.toMatchObject({
+      selectedScopeRecoveryRequired: false,
+      accessibleTabCount: 1,
+    });
+  });
+
+  it("retires every live attachment when selected-tab storage is poisoned", async () => {
+    const harness = await ready({
+      storedConfig: config("selected"),
+      initialTabs: [
+        { id: 53, url: "https://example.com/one", groupId: -1 },
+        { id: 54, url: "https://example.com/two", groupId: -1 },
+      ],
+    });
+    for (const tabId of [53, 54]) {
+      await expect(
+        sendRuntimeMessage(harness, {
+          type: "toggleTabAccess",
+          tabId,
+          accessMode: "selected",
+          grant: true,
+        }),
+      ).resolves.toMatchObject({ ok: true, accessible: true });
+    }
+    harness.socket.receive({ type: "attach", seq: 23, tabId: 54 });
+    await vi.waitFor(() =>
+      expect(harness.debuggerAttach).toHaveBeenCalledWith({ tabId: 54 }, "1.3"),
+    );
+
+    harness.storageSet.mockRejectedValue(new Error("selected guard unavailable"));
+    harness.sessionStorageRemove.mockRejectedValue(new Error("selected revoke unavailable"));
+    harness.sessionStorageSet.mockRejectedValue(new Error("selected fallback unavailable"));
+    await expect(
+      sendRuntimeMessage(harness, {
+        type: "toggleTabAccess",
+        tabId: 53,
+        accessMode: "selected",
+        grant: false,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining(
+        "prior committed tab scope may return if the extension worker restarts",
+      ),
+    });
+    await vi.waitFor(() =>
+      expect(harness.debuggerDetach).toHaveBeenCalledWith({ targetId: "tab-54" }),
+    );
+
+    harness.socket.send.mockClear();
+    harness.debuggerEventListener({ tabId: 54 }, "Runtime.consoleAPICalled", { value: 1 });
+    expect(
+      harness
+        .frames()
+        .some((frame) => frame.type === "cdpEvent" && frame.method === "Runtime.consoleAPICalled"),
+    ).toBe(false);
+  });
+
+  it("ignores tab-group changes after compatibility sharing takes ownership", async () => {
+    const harness = await ready({
+      storedConfig: config("selected"),
+      initialTabs: [{ id: 55, url: "https://example.com/grouped", groupId: -1 }],
+    });
+    await expect(
+      sendRuntimeMessage(harness, {
+        type: "toggleTabAccess",
+        tabId: 55,
+        accessMode: "selected",
+        grant: true,
+      }),
+    ).resolves.toMatchObject({ ok: true, accessible: true });
+    harness.socket.receive({ type: "attach", seq: 24, tabId: 55 });
+    await vi.waitFor(() =>
+      expect(harness.debuggerAttach).toHaveBeenCalledWith({ tabId: 55 }, "1.3"),
+    );
+    harness.debuggerDetach.mockClear();
+
+    harness.updateTab(55, { groupId: 7 });
+    harness.tabGroupUpdatedListener?.({ id: 7, title: "Work" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(harness.debuggerDetach).not.toHaveBeenCalled();
+    harness.socket.send.mockClear();
+    harness.debuggerEventListener({ tabId: 55 }, "Runtime.consoleAPICalled", { value: 1 });
+    expect(
+      harness
+        .frames()
+        .some((frame) => frame.type === "cdpEvent" && frame.method === "Runtime.consoleAPICalled"),
+    ).toBe(true);
+  });
+
+  it("clears the explicit selected scope even when another unpair cleanup step fails", async () => {
+    const harness = await ready({
+      storedConfig: {
+        ...config("selected"),
+        explicitSelectedTabBackendV1: true,
+      },
+      sessionConfig: { explicitSelectedTabIdsV1: [56] },
+      initialTabs: [{ id: 56, url: "https://example.com/unpair", groupId: -1 }],
+    });
+    harness.sessionStorageRemove.mockRejectedValueOnce(new Error("deny cleanup unavailable"));
+
+    const response = await sendRuntimeMessage(harness, { type: "unpair" });
+
+    expect(response).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("Could not fully disconnect"),
+    });
+    expect(harness.storageValues).not.toHaveProperty("relayUrl");
+    expect(harness.storageValues).not.toHaveProperty("explicitSelectedTabBackendV1");
+    expect(harness.sessionStorageValues).not.toHaveProperty("explicitSelectedTabIdsV1");
   });
 
   it.each([null, -1])(

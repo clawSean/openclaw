@@ -55,7 +55,7 @@ async function refresh() {
     status.accessMode === "selected"
       ? access.accessible
         ? "Stop sharing this tab"
-        : status.explicitSelectedTabs
+        : status.explicitSelectedTabs && !status.selectedScopeRecoveryRequired
           ? "Share this tab"
           : "Share only this tab"
       : access.accessible

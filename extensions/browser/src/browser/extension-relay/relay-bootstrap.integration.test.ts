@@ -27,6 +27,7 @@ it.each(["owned", "borrowed"] as const)(
     const realm = vm.createContext({});
     const objects = new Map<string, unknown>();
     const evaluated: unknown[] = [];
+    const detachAttachedDebugger = vi.fn(async () => {});
     let attachAttempts = 0;
     let send: (message: Record<string, unknown>) => void;
     const event = (context: Record<string, unknown>) =>
@@ -101,7 +102,11 @@ it.each(["owned", "borrowed"] as const)(
     const handler = createRelayCommandHandler({
       send: (message) => send(message),
       isCurrent: () => true,
-      attachDebugger: async () => ({ targetId: "fixture-target", assertCurrent: () => {} }),
+      attachDebugger: async () => ({
+        targetId: "fixture-target",
+        assertCurrent: () => {},
+        detach: detachAttachedDebugger,
+      }),
       detachDebugger: async () => {},
       createTab: async () => {},
       focusWindowForTab: async () => {},

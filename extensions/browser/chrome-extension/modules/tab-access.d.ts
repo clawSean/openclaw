@@ -12,13 +12,18 @@ export type CreatedTabOperation = {
     tabId: number,
     assertCurrent: () => void,
     creationEpoch?: TabAccessEpoch,
-  ): Promise<{ targetId: string; assertCurrent(): void }>;
+  ): Promise<{ targetId: string; assertCurrent(): void; detach(): Promise<void> }>;
   handoff(result: { tabId: number; targetId: string }): void;
 };
 
 type CreatedTabSelection = {
   tab: BrowserTabSnapshot;
   assertCurrent(): void;
+};
+
+type CreatedTabSelectionGrant = {
+  commit(): void;
+  rollback(): Promise<void>;
 };
 
 type TabGroupSnapshot = { id: number; title?: string };
@@ -97,7 +102,11 @@ export type TabAccessPolicy = {
     change: { url?: string; groupId?: number; status?: string },
     tab?: BrowserTabSnapshot,
   ): boolean;
-  addTabToGroup(tabId: number): Promise<void>;
+  observeTabMove(tabId: number): boolean;
+  addTabToGroup(
+    tabId: number,
+    created?: CreatedTabSelection,
+  ): Promise<void | CreatedTabSelectionGrant>;
   createTab(
     message: { url: string; background?: boolean; focus?: boolean },
     operation: CreatedTabOperation,
@@ -123,6 +132,10 @@ export type TabAccessPolicy = {
 export function createTabAccessPolicy(options: {
   chromeApi?: TabAccessChromeApi;
   isSelectedTab(tab: BrowserTabSnapshot): boolean | Promise<boolean>;
-  addSelectedTab?(tabId: number, created?: CreatedTabSelection): void | Promise<void>;
+  addSelectedTab?(
+    tabId: number,
+    created?: CreatedTabSelection,
+  ): void | CreatedTabSelectionGrant | Promise<void | CreatedTabSelectionGrant>;
+  selectedTabsUseGroups?(): boolean;
   getGroupColor?(): Promise<string>;
 }): TabAccessPolicy;

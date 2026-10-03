@@ -16,6 +16,7 @@ function deferred() {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 function createHarness({
@@ -107,8 +108,57 @@ describe("explicit selected-tab storage", () => {
     await expect(harness.controller.has(3)).resolves.toBe(true);
   });
 
+  it.each(["rejected", "never-settling"] as const)(
+    "preserves the group backend when its first marker write is %s",
+    async (failure) => {
+      const harness = createHarness({ explicit: false, ids: [] });
+      vi.stubGlobal("chrome", {
+        tabGroups: {
+          get: vi.fn(async () => ({ id: 7, title: "OpenClaw", windowId: 1 })),
+        },
+      });
+      if (failure === "rejected") {
+        harness.local.set.mockRejectedValueOnce(new Error("marker rejected"));
+      } else {
+        vi.useFakeTimers();
+        harness.local.set.mockImplementationOnce(() => new Promise(() => {}));
+      }
+
+      const replacing = harness.controller.replaceWith(3).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      if (failure === "never-settling") {
+        await vi.advanceTimersByTimeAsync(1_001);
+      }
+
+      await expect(replacing).resolves.toEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("previous tab-group sharing scope is unchanged"),
+        }),
+      );
+      expect(harness.localValues).not.toHaveProperty(EXPLICIT_SELECTED_TAB_BACKEND_KEY);
+      expect(harness.session.set).not.toHaveBeenCalled();
+      await expect(harness.controller.isExplicit()).resolves.toBe(false);
+      await expect(
+        harness.controller.isSelected({ id: 1, windowId: 1, groupId: 7, incognito: false }),
+      ).resolves.toBe(true);
+
+      const restarted = createSelectedTabsController({ chromeApi: harness.chromeApi });
+      await expect(restarted.isExplicit()).resolves.toBe(false);
+      await expect(
+        restarted.isSelected({ id: 2, windowId: 1, groupId: 7, incognito: false }),
+      ).resolves.toBe(true);
+    },
+  );
+
   it("does not expose a replacement before its session write commits", async () => {
     const harness = createHarness({ explicit: true });
+    const policy = createTabAccessPolicy({
+      chromeApi: harness.chromeApi,
+      isSelectedTab: (tab) => harness.controller.isSelected(tab),
+    });
+    await policy.initialize("selected", true);
     const gate = deferred();
     harness.session.set.mockImplementationOnce(async (values: Record<string, unknown>) => {
       await gate.promise;
@@ -117,11 +167,19 @@ describe("explicit selected-tab storage", () => {
 
     const replacing = harness.controller.replaceWith(3);
     const reading = harness.controller.has(3);
+    const listing = policy.listAccessibleTabs();
+    const requiring = policy.requireTab(3, policy.capture(3));
     await vi.waitFor(() =>
       expect(harness.session.set).toHaveBeenCalledWith({ [EXPLICIT_SELECTED_TAB_IDS_KEY]: [3] }),
     );
     let settled = false;
     void reading.then(() => {
+      settled = true;
+    });
+    void listing.then(() => {
+      settled = true;
+    });
+    void requiring.then(() => {
       settled = true;
     });
     await Promise.resolve();
@@ -130,6 +188,8 @@ describe("explicit selected-tab storage", () => {
     gate.resolve();
     await expect(replacing).resolves.toBeUndefined();
     await expect(reading).resolves.toBe(true);
+    await expect(listing).resolves.toEqual([expect.objectContaining({ id: 3 })]);
+    await expect(requiring).resolves.toMatchObject({ id: 3 });
   });
 
   it("leaves the prior selection unchanged when replacement validation fails", async () => {
@@ -147,7 +207,7 @@ describe("explicit selected-tab storage", () => {
     const controller = createSelectedTabsController({ chromeApi: harness.chromeApi });
 
     await expect(controller.has(1)).resolves.toBe(false);
-    await expect(controller.add(3)).rejects.toThrow("no tabs were shared");
+    await expect(controller.add(3)).rejects.toThrow("stopped sharing all tabs");
   });
 
   it("fails closed when the backend marker cannot be read", async () => {
@@ -176,18 +236,22 @@ describe("explicit selected-tab storage", () => {
     const harness = createHarness({ explicit: true });
     harness.session.set.mockRejectedValueOnce(new Error("write failed"));
 
-    await expect(harness.controller.replaceWith(3)).rejects.toThrow("no tabs were shared");
+    await expect(harness.controller.replaceWith(3)).rejects.toThrow("stopped sharing all tabs");
     await expect(harness.controller.has(1)).resolves.toBe(false);
     await expect(harness.controller.has(3)).resolves.toBe(false);
-    await expect(harness.controller.add(3)).rejects.toThrow("no tabs were shared");
+    await expect(harness.controller.add(3)).rejects.toThrow("stopped sharing all tabs");
   });
 
   it("keeps stale grants denied after a failed revocation write and worker restart", async () => {
     const harness = createHarness({ explicit: true, ids: [1, 2] });
-    harness.session.set.mockRejectedValueOnce(new Error("write failed"));
-    harness.session.remove.mockRejectedValueOnce(new Error("cleanup failed"));
+    harness.session.set
+      .mockRejectedValueOnce(new Error("write failed"))
+      .mockRejectedValueOnce(new Error("write failed"));
+    harness.session.remove
+      .mockRejectedValueOnce(new Error("cleanup failed"))
+      .mockRejectedValueOnce(new Error("cleanup failed"));
 
-    await expect(harness.controller.remove(1)).rejects.toThrow("no tabs were shared");
+    await expect(harness.controller.remove(1)).rejects.toThrow("stopped sharing all tabs");
     expect(harness.localValues).toHaveProperty(EXPLICIT_SELECTED_TAB_MUTATION_KEY, true);
     expect(harness.sessionValues).toHaveProperty(EXPLICIT_SELECTED_TAB_IDS_KEY, [1, 2]);
 
@@ -207,18 +271,75 @@ describe("explicit selected-tab storage", () => {
     );
   });
 
+  it("revokes stored grants when the persistent mutation guard write fails", async () => {
+    const harness = createHarness({ explicit: true, ids: [1, 2] });
+    harness.local.set.mockImplementationOnce(() => {
+      throw new Error("guard unavailable");
+    });
+
+    await expect(harness.controller.remove(1)).rejects.toThrow("stopped sharing all tabs");
+    expect(harness.localValues).not.toHaveProperty(EXPLICIT_SELECTED_TAB_MUTATION_KEY);
+    expect(harness.sessionValues).not.toHaveProperty(EXPLICIT_SELECTED_TAB_IDS_KEY);
+
+    const restarted = createSelectedTabsController({ chromeApi: harness.chromeApi });
+    await expect(restarted.has(1)).resolves.toBe(false);
+    await expect(restarted.has(2)).resolves.toBe(false);
+  });
+
+  it("keeps a replacement worker denied while the persistent guard write is pending", async () => {
+    const harness = createHarness({ explicit: true, ids: [1, 2] });
+    const gate = deferred();
+    harness.local.set.mockImplementationOnce(async (values: Record<string, unknown>) => {
+      await gate.promise;
+      return Object.assign(harness.localValues, values);
+    });
+
+    const removing = harness.controller.remove(1);
+    await vi.waitFor(() => expect(harness.session.remove).toHaveBeenCalled());
+    expect(harness.sessionValues).not.toHaveProperty(EXPLICIT_SELECTED_TAB_IDS_KEY);
+
+    const restarted = createSelectedTabsController({ chromeApi: harness.chromeApi });
+    await expect(restarted.has(1)).resolves.toBe(false);
+    await expect(restarted.has(2)).resolves.toBe(false);
+
+    gate.resolve();
+    await expect(removing).resolves.toBeUndefined();
+    await expect(harness.controller.has(2)).resolves.toBe(true);
+  });
+
+  it("aborts honestly when neither durable denial can survive a worker restart", async () => {
+    const harness = createHarness({ explicit: true, ids: [1, 2] });
+    harness.local.set.mockRejectedValue(new Error("guard unavailable"));
+    harness.session.remove.mockRejectedValue(new Error("ledger removal unavailable"));
+    harness.session.set.mockRejectedValue(new Error("ledger fallback unavailable"));
+
+    await expect(harness.controller.remove(1)).rejects.toThrow(
+      "prior committed tab scope may return if the extension worker restarts",
+    );
+    await expect(harness.controller.has(1)).resolves.toBe(false);
+    await expect(harness.controller.has(2)).resolves.toBe(false);
+    expect(harness.localValues).not.toHaveProperty(EXPLICIT_SELECTED_TAB_MUTATION_KEY);
+    expect(harness.sessionValues).toHaveProperty(EXPLICIT_SELECTED_TAB_IDS_KEY, [1, 2]);
+
+    const restarted = createSelectedTabsController({ chromeApi: harness.chromeApi });
+    await expect(restarted.has(1)).resolves.toBe(true);
+    await expect(restarted.has(2)).resolves.toBe(true);
+  });
+
   it("recovers from an interrupted ledger mutation only through a fresh explicit share", async () => {
     const harness = createHarness({ explicit: true, ids: [1, 2] });
     harness.localValues[EXPLICIT_SELECTED_TAB_MUTATION_KEY] = true;
     const restarted = createSelectedTabsController({ chromeApi: harness.chromeApi });
 
     await expect(restarted.has(1)).resolves.toBe(false);
+    await expect(restarted.isRecoveryRequired()).resolves.toBe(true);
     await restarted.replaceWith(3);
 
     expect(harness.sessionValues).toHaveProperty(EXPLICIT_SELECTED_TAB_IDS_KEY, [3]);
     expect(harness.localValues).not.toHaveProperty(EXPLICIT_SELECTED_TAB_MUTATION_KEY);
     await expect(restarted.has(1)).resolves.toBe(false);
     await expect(restarted.has(3)).resolves.toBe(true);
+    await expect(restarted.isRecoveryRequired()).resolves.toBe(false);
   });
 
   it("adds and removes tabs without consulting tab groups after activation", async () => {
@@ -274,7 +395,12 @@ describe("explicit selected-tab storage", () => {
     const harness = createHarness({ explicit: true });
     harness.chromeApi.tabs.get
       .mockRejectedValueOnce(new Error("replacement not ready"))
-      .mockResolvedValueOnce({ id: 3, windowId: 1, incognito: false });
+      .mockResolvedValueOnce({
+        id: 3,
+        windowId: 1,
+        incognito: false,
+        url: "https://example.com/3",
+      });
 
     await expect(harness.controller.replaceTab(3, 1)).resolves.toBe(true);
 
