@@ -252,6 +252,11 @@ serveOwnedWorkerTasks(
           };
         });
       }
+      if (request.kind === "fork-reply-selection") {
+        const { readForkReplySelectionForWorker } =
+          await import("./session-transcript-worker-query-operations.js");
+        return { ok: true, value: readForkReplySelectionForWorker(request) };
+      }
       if (request.kind === "transcript-search") {
         const { searchSessionTranscriptsReadOnlySync } =
           await import("./session-transcript-search.js");

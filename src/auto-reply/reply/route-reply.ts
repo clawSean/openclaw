@@ -111,6 +111,8 @@ type RouteReplyParams = {
   cfg: OpenClawConfig;
   /** Optional abort signal for cooperative cancellation. */
   abortSignal?: AbortSignal;
+  /** Internal live authority fence at the final synchronous adapter handoff. */
+  assertDirectAdapterHandoff?: () => void;
   /** Mirror reply into session transcript (default: true when sessionKey is set). */
   mirror?: boolean;
   /** Whether this message is being sent in a group/channel context */
@@ -397,6 +399,9 @@ async function routeReplyOperation(
       threadId: resolvedThreadId,
       session: outboundSession,
       signal: abortSignal,
+      ...(params.assertDirectAdapterHandoff
+        ? { assertDirectAdapterHandoff: params.assertDirectAdapterHandoff }
+        : {}),
       ...(params.deliveryIntentId
         ? {
             deliveryIntentId: params.deliveryIntentId,

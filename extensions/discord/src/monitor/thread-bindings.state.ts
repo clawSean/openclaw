@@ -182,6 +182,10 @@ export function normalizePersistedBinding(
     typeof value.maxAgeMs === "number" && Number.isFinite(value.maxAgeMs)
       ? Math.max(0, Math.floor(value.maxAgeMs))
       : undefined;
+  const expiresAt =
+    typeof value.expiresAt === "number" && Number.isFinite(value.expiresAt) && value.expiresAt >= 1
+      ? Math.floor(value.expiresAt)
+      : undefined;
   const metadata =
     value.metadata && typeof value.metadata === "object" ? { ...value.metadata } : undefined;
 
@@ -210,6 +214,9 @@ export function normalizePersistedBinding(
   }
   if (maxAgeMs !== undefined) {
     record.maxAgeMs = maxAgeMs;
+  }
+  if (expiresAt !== undefined) {
+    record.expiresAt = expiresAt;
   }
   if (metadata !== undefined) {
     record.metadata = metadata;
@@ -266,12 +273,17 @@ export function resolvePreparedThreadBindingLifecycle(params: {
     record: params.record,
     defaultMaxAgeMs: params.maxAgeMs,
   });
+  const policyMaxAgeExpiresAt = resolveTimestampExpiry(params.record.boundAt, maxAgeMs);
+  const absoluteExpiresAt = params.record.expiresAt;
   return {
     idleTimeoutMs,
     maxAgeMs,
     ...resolveThreadBindingExpiry({
       inactivityExpiresAt: resolveTimestampExpiry(params.record.lastActivityAt, idleTimeoutMs),
-      maxAgeExpiresAt: resolveTimestampExpiry(params.record.boundAt, maxAgeMs),
+      maxAgeExpiresAt:
+        absoluteExpiresAt !== undefined && Number.isFinite(absoluteExpiresAt)
+          ? Math.min(policyMaxAgeExpiresAt ?? Infinity, absoluteExpiresAt)
+          : policyMaxAgeExpiresAt,
     }),
   };
 }

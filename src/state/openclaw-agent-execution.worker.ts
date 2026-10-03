@@ -347,6 +347,7 @@ function openAgentDatabaseBackend(
         assertIdentity: typeof import("../config/sessions/session-accessor.sqlite-scope.js").assertSqliteTranscriptWriteIdentity;
       }
     | undefined;
+  let forkAtMessage: typeof import("./openclaw-agent-execution-fork.js") | undefined;
   let replacements:
     | typeof import("../config/sessions/session-accessor.sqlite-replacement-state.js")
     | undefined;
@@ -466,6 +467,9 @@ function openAgentDatabaseBackend(
           return publication;
         },
       );
+    }
+    if (command.type === "session.transcript.forkAtMessage" && forkAtMessage) {
+      return forkAtMessage.executeForkAtMessage(command.input, options, writeTransaction, admit);
     }
     if (command.type === "session.entry.acp" && acpEntry) {
       return acpEntry.mutateAcpSessionEntryInWorker(openWriter(), options, command.input, admit);
@@ -598,6 +602,11 @@ function openAgentDatabaseBackend(
             initialize: header.ensureTranscriptHeader,
             assertIdentity: scope.assertSqliteTranscriptWriteIdentity,
           };
+        });
+      }
+      if (command.type === "session.transcript.forkAtMessage") {
+        return import("./openclaw-agent-execution-fork.js").then((module) => {
+          forkAtMessage = module;
         });
       }
       if (command.type === "session.entries.replace") {

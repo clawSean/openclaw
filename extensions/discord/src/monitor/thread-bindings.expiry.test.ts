@@ -3,6 +3,30 @@ import { resolvePreparedThreadBindingLifecycle } from "./thread-bindings.state.j
 import type { ThreadBindingRecord } from "./thread-bindings.types.js";
 
 describe("prepared Discord expiry", () => {
+  it("keeps an absolute ceiling after activity and timeout changes", () => {
+    const record: ThreadBindingRecord = {
+      accountId: "default",
+      channelId: "channel",
+      threadId: "thread",
+      targetKind: "subagent",
+      targetSessionKey: "agent:main:source",
+      agentId: "main",
+      boundBy: "test",
+      boundAt: 100,
+      lastActivityAt: 400,
+      idleTimeoutMs: 1_000,
+      maxAgeMs: 0,
+      expiresAt: 500,
+    };
+    expect(
+      resolvePreparedThreadBindingLifecycle({ record, idleTimeoutMs: 0, maxAgeMs: 0 }),
+    ).toEqual({
+      idleTimeoutMs: 1_000,
+      maxAgeMs: 0,
+      expiresAt: 500,
+      reason: "max-age-expired",
+    });
+  });
   it.each([
     [100, 50, 10, 10, { expiresAt: 60, reason: "idle-expired" }],
     [100, 100, 10, 10, { expiresAt: 110, reason: "idle-expired" }],

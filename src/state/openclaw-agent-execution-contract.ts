@@ -8,10 +8,12 @@ import type {
   TranscriptArchivePublishResult,
 } from "../config/sessions/session-accessor.sqlite-archive-types.js";
 import type { SessionTranscriptInitializationPublication } from "../config/sessions/session-accessor.sqlite-entry-cache.types.js";
+import type { SessionForkAtMessageWorkerInput } from "../config/sessions/session-accessor.sqlite-message-cut-worker.types.js";
 import type {
   SessionEntryReplacementCommit,
   SessionEntryReplacementCommitted,
 } from "../config/sessions/session-accessor.sqlite-replacement-types.js";
+import type { SessionMessageCutMutationResult } from "../config/sessions/session-accessor.types.js";
 import type {
   PublishedSessionTranscriptArchive,
   SessionLegacyArchiveRemovalResult,
@@ -82,6 +84,10 @@ export type AgentDatabaseOperations = AgentDatabaseDomainOperations & {
   "session.transcript.initialize": {
     input: { sessionKey: string; sessionId: string; cwd?: string };
     output: SessionTranscriptInitializationPublication;
+  };
+  "session.transcript.forkAtMessage": {
+    input: SessionForkAtMessageWorkerInput;
+    output: SessionMessageCutMutationResult | { status: "conflict" };
   };
   "database.prepareWrite": { input: undefined; output: void };
   "session.entry.read": { input: { sessionKey: string }; output: InternalSessionEntry | undefined };

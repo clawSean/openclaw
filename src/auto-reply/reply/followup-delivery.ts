@@ -407,6 +407,7 @@ async function sendFollowupPayloads(params: {
   const crossChannelFailures: ReplyPayload[] = [];
   const queuedPayloads: ReplyPayload[] = [];
   const dispatchPayload = async (payload: ReplyPayload) => {
+    turn.queued.assertForkReplaySourceCurrent?.();
     if (deliverQueuedBatch) {
       queuedPayloads.push(payload);
     } else {
@@ -421,6 +422,7 @@ async function sendFollowupPayloads(params: {
   const sameChannelOrigin = Boolean(origin && origin === provider);
   const crossChannelOrigin = Boolean(origin && provider && origin !== provider);
   for (const payload of payloads) {
+    turn.queued.assertForkReplaySourceCurrent?.();
     const providerRoute = deliveryPlan.resolveFollowupRoute({
       payload,
       originatingChannel,
@@ -470,6 +472,7 @@ async function sendFollowupPayloads(params: {
             : params.mirror,
         replyKind: params.kind,
         runId: params.runId,
+        assertDirectAdapterHandoff: turn.queued.assertForkReplaySourceCurrent,
       });
       if (!result.delivered && (result.queueCustody === "held" || result.ambiguous)) {
         logVerbose(
@@ -514,6 +517,7 @@ async function sendFollowupPayloads(params: {
     });
   }
   if (params.kind !== "final" && queuedPayloads.length > 0) {
+    turn.queued.assertForkReplaySourceCurrent?.();
     await deliverQueuedBatch?.({
       kind: "queued-followup",
       runId: params.runId,

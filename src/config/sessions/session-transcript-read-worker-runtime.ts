@@ -10,6 +10,7 @@ import { unwrapSessionTranscriptWorkerReply } from "./session-history-worker-err
 import { resolveSessionTranscriptReadFence } from "./session-transcript-read-fence.js";
 import type {
   SessionBranchSummaryWorkerInput,
+  SessionForkReplySelectionWorkerInput,
   SessionEntryWorkerInput,
   SessionResetRecallWorkerInput,
   SessionModelContextWorkerInput,
@@ -58,6 +59,28 @@ const branchSummaries = new WorkerTaskPool<
   maxWorkers: 1,
   sharedCompute: true,
 });
+
+const forkReplySelections = new WorkerTaskPool<
+  SessionForkReplySelectionWorkerInput,
+  SessionTranscriptWorkerReply<"fork-reply-selection">
+>({
+  workerUrl,
+  prepareWorker: prepareSqliteReadWorker,
+  workerOptions: { resourceLimits: { maxOldGenerationSizeMb: 512 } },
+  maxWorkers: 1,
+  sharedCompute: true,
+});
+
+export async function readSessionForkReplySelectionInWorker(
+  input: Omit<SessionForkReplySelectionWorkerInput, "kind">,
+) {
+  return unwrapSessionTranscriptWorkerReply<"fork-reply-selection">(
+    await forkReplySelections.run(
+      { kind: "fork-reply-selection", ...input },
+      { inputBytes: JSON.stringify(input).length * 2, timeoutMs: 60_000 },
+    ),
+  );
+}
 
 export async function readSessionTranscriptModelContextAsync(
   target: SessionTranscriptRuntimeTarget,
