@@ -8,6 +8,7 @@ import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import { questionGatewayRuntime } from "openclaw/plugin-sdk/question-gateway-runtime";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import {
+  isRecord,
   normalizeOptionalString,
   normalizeOptionalStringifiedId,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
@@ -56,6 +57,15 @@ const loadDiscordComponentSendRuntime = createLazyRuntimeModule(
 
 type DiscordOutboundMessageContext = Parameters<NonNullable<ChannelOutboundAdapter["sendText"]>>[0];
 
+function shouldSuppressDiscordPresentationMentions(
+  params: DiscordOutboundMessageContext & {
+    payload?: { channelData?: { discord?: unknown } };
+  },
+): boolean {
+  const discordData = params.payload?.channelData?.discord;
+  return isRecord(discordData) && discordData.suppressPresentationMentions === true;
+}
+
 function resolveDiscordDeliveryOptions(params: DiscordOutboundMessageContext) {
   return {
     onPlatformSendDispatch: params.onPlatformSendDispatch,
@@ -99,6 +109,9 @@ async function maybeSendDiscordWebhookText(params: DiscordOutboundMessageContext
       maxChars: params.formatting?.textLimit,
       maxLines: params.formatting?.maxLinesPerMessage,
     },
+    ...(shouldSuppressDiscordPresentationMentions(params)
+      ? { allowedMentions: { parse: [] } }
+      : {}),
     ...resolveDiscordDeliveryOptions(params),
   });
 }
@@ -121,6 +134,9 @@ async function resolveDiscordOutboundMessageSend(params: DiscordOutboundMessageC
       accountId: params.accountId ?? undefined,
       silent: params.silent ?? undefined,
       cfg: params.cfg,
+      ...(shouldSuppressDiscordPresentationMentions(params)
+        ? { allowedMentions: { parse: [] } }
+        : {}),
       ...resolveDiscordFormattingOptions({ formatting: params.formatting }),
       ...resolveDiscordDeliveryOptions(params),
     },

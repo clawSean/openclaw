@@ -44,6 +44,11 @@ const presentationCallbackActionSchema = Type.Object({
   value: Type.String(),
 });
 
+const presentationCopyTextActionSchema = Type.Object({
+  type: Type.Literal("copy-text"),
+  text: Type.String(),
+});
+
 const presentationCommandOrCallbackActionSchema = Type.Union([
   presentationCommandActionSchema,
   presentationCallbackActionSchema,
@@ -54,6 +59,7 @@ const presentationCommandOrCallbackActionSchema = Type.Union([
 const presentationButtonActionSchema = Type.Union([
   presentationCommandActionSchema,
   presentationCallbackActionSchema,
+  presentationCopyTextActionSchema,
   Type.Object({
     type: Type.Literal("url"),
     url: Type.String(),

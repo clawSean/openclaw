@@ -276,6 +276,40 @@ describe("deliverDiscordInteractionReply", () => {
     expect(interaction.followUp).not.toHaveBeenCalled();
   });
 
+  it("suppresses mention parsing for presentation-only copy fallback", async () => {
+    const interaction = createInteraction();
+
+    await deliverDiscordInteractionReply({
+      interaction: interaction as never,
+      payload: {
+        presentation: {
+          blocks: [
+            {
+              type: "buttons",
+              buttons: [
+                {
+                  label: "Copy @everyone @here <@123> <@!456> <@&789>",
+                  action: {
+                    type: "copy-text",
+                    text: "x".repeat(2100),
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+      textLimit: 2000,
+      preferFollowUp: false,
+      chunkMode: "length",
+    });
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ allowedMentions: { parse: [] } }),
+    );
+    expect(interaction.followUp).not.toHaveBeenCalled();
+  });
+
   it("sends embed-only native command replies through the initial reply", async () => {
     const interaction = createInteraction();
     const embeds = [{ title: "Status", description: "All systems operational" }];

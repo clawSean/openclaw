@@ -14,6 +14,9 @@ function toInlineKeyboardButton(
   if (button.callback_data) {
     return { ...label, callback_data: button.callback_data };
   }
+  if (button.copy_text?.text) {
+    return { ...label, copy_text: { text: button.copy_text.text } };
+  }
   if (button.web_app?.url) {
     return { ...label, web_app: { url: button.web_app.url } };
   }

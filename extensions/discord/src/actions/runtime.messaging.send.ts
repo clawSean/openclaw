@@ -196,6 +196,8 @@ export async function handleDiscordMessageSendAction(ctx: DiscordMessagingAction
       const threadName = readStringParam(ctx.params, "threadName");
       const sessionKey = readStringParam(ctx.params, "__sessionKey");
       const agentId = readStringParam(ctx.params, "__agentId");
+      const allowedMentions =
+        readBooleanParam(ctx.params, "__suppressMentions") === true ? { parse: [] } : undefined;
 
       if (componentSpec) {
         if (asVoice) {
@@ -220,6 +222,7 @@ export async function handleDiscordMessageSendAction(ctx: DiscordMessagingAction
           mediaLocalRoots: ctx.options?.mediaLocalRoots,
           mediaReadFile: ctx.options?.mediaReadFile,
           ...(suppressEmbeds === undefined ? {} : { suppressEmbeds }),
+          ...(allowedMentions ? { allowedMentions } : {}),
         });
         return jsonResult(
           await appendDiscordThreadRenameResult(ctx, {
@@ -271,6 +274,7 @@ export async function handleDiscordMessageSendAction(ctx: DiscordMessagingAction
         embeds,
         silent,
         ...(suppressEmbeds === undefined ? {} : { suppressEmbeds }),
+        ...(allowedMentions ? { allowedMentions } : {}),
       });
       return jsonResult(
         await appendDiscordThreadRenameResult(ctx, {

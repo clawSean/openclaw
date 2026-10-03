@@ -10,6 +10,7 @@ import {
   resolveTextChunksWithFallback,
 } from "openclaw/plugin-sdk/reply-payload";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
+import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { loadWebMedia } from "openclaw/plugin-sdk/web-media";
 import { resolveDiscordMaxLinesPerMessage } from "../accounts.js";
 import { chunkDiscordTextWithMode } from "../chunk.js";
@@ -127,12 +128,13 @@ export async function deliverDiscordInteractionReply(params: {
   const payload = await renderPresentationForDelivery(
     {
       presentationCapabilities: DISCORD_PRESENTATION_CAPABILITIES,
-      renderPresentation: (adapted) =>
+      renderPresentation: (adapted, sourcePresentation) =>
         preserveNativeParts
           ? null
           : buildDiscordPresentationPayload({
               payload: adapted,
               presentation: adapted.presentation,
+              sourcePresentation,
             }),
     },
     params.payload,
@@ -144,6 +146,9 @@ export async function deliverDiscordInteractionReply(params: {
     ? buildDiscordComponentMessage({ spec: componentSpec, ...params.componentRoute })
     : undefined;
   const reply = resolveSendableOutboundReplyParts(payload);
+  const discordData = payload.channelData?.discord;
+  const suppressPresentationMentions =
+    isRecord(discordData) && discordData.suppressPresentationMentions === true;
   let { components: firstMessageComponents, embeds: firstMessageEmbeds } =
     resolveDiscordInteractionMessageParts(payload);
   if (componentBuild) {
@@ -166,6 +171,7 @@ export async function deliverDiscordInteractionReply(params: {
       ...(embeds && !hasV2 ? { embeds } : {}),
       ...(params.responseEphemeral !== undefined ? { ephemeral: params.responseEphemeral } : {}),
       ...(files?.length ? { files } : {}),
+      ...(suppressPresentationMentions ? { allowedMentions: { parse: [] } } : {}),
     };
     let result: void | null;
     try {

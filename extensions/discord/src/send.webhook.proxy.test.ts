@@ -69,6 +69,21 @@ describe("Discord webhook transport", () => {
     ).toBe(true);
   });
 
+  it("serializes an explicit no-mentions policy", async () => {
+    await sendWebhookMessageDiscord("@everyone <@123> <@&456>", {
+      ...opts,
+      allowedMentions: { parse: [] },
+    });
+
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBe(
+      JSON.stringify({
+        content: "@everyone <@123> <@&456>",
+        flags: MessageFlags.SuppressEmbeds,
+        allowed_mentions: { parse: [] },
+      }),
+    );
+  });
+
   it.each([
     { kind: "poll", accountId: " Work ", defaultAccount: undefined, failed: false },
     { kind: "sticker", accountId: undefined, defaultAccount: "work", failed: false },

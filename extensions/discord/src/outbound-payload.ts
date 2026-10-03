@@ -10,7 +10,7 @@ import {
   sendTextMediaPayload,
 } from "openclaw/plugin-sdk/reply-payload";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
-import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { isRecord, normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { normalizeDiscordApprovalPayload } from "./outbound-approval.js";
 import {
   resolveDiscordComponentSpec,
@@ -32,6 +32,12 @@ type DiscordOutboundPayloadContext = Parameters<
 type DiscordPayloadSendContext = Awaited<ReturnType<typeof createDiscordPayloadSendContext>>;
 
 const log = createSubsystemLogger("discord/outbound");
+const SUPPRESS_ALL_MENTIONS = { parse: [] };
+
+function shouldSuppressPresentationMentions(ctx: DiscordOutboundPayloadContext): boolean {
+  const discordData = ctx.payload.channelData?.discord;
+  return isRecord(discordData) && discordData.suppressPresentationMentions === true;
+}
 
 function createDiscordUnknownPayloadResult(target: string) {
   return {
@@ -57,6 +63,7 @@ function resolveDiscordDeliveryOptions(
     cfg: ctx.cfg,
     onPlatformSendDispatch: ctx.onPlatformSendDispatch,
     assertPlatformSendAuthorized: ctx.assertDirectAdapterHandoff,
+    ...(shouldSuppressPresentationMentions(ctx) ? { allowedMentions: SUPPRESS_ALL_MENTIONS } : {}),
   };
 }
 
