@@ -63,6 +63,7 @@ import type {
   SessionEntryReadScope,
   SessionEntrySummary,
   SessionTranscriptReadScope,
+  SessionTranscriptRuntimeTarget,
 } from "./session-accessor.types.js";
 import type { CanonicalSessionReaderContinuation } from "./session-canonical-key.js";
 import type {
@@ -167,6 +168,14 @@ export type {
 } from "./session-transcript-hydration.types.js";
 
 export type { SessionModelContextWorkerInput } from "./session-transcript-worker-read.types.js";
+
+export type SessionForkReplySelectionWorkerInput = {
+  kind: "fork-reply-selection";
+  target: SessionTranscriptRuntimeTarget & { env?: NodeJS.ProcessEnv };
+  replyToId: string;
+  conversation: import("../../infra/outbound/session-binding.types.js").ConversationRef;
+  replyConversationRef?: string;
+};
 
 export type SessionSqliteTargetWorkerInput = {
   kind: "sqlite-target";
@@ -404,6 +413,7 @@ export type SessionTranscriptWorkerInput =
   | SessionSqliteTargetWorkerInput
   | SessionHistoryWorkerInput
   | SessionModelContextWorkerInput
+  | SessionForkReplySelectionWorkerInput
   | SessionContextMessagesWorkerInput
   | SessionEntryWorkerInput
   | SessionResetRecallWorkerInput;
@@ -421,6 +431,7 @@ export type SessionTranscriptWorkerValues = SessionTranscriptInventoryWorkerValu
     result: SessionTranscriptVisibleMessageDeltaResult;
   };
   "session-memory-capture": { kind: "session-memory-capture"; result: SessionMemoryTranscript };
+  "fork-reply-selection": import("./session-transcript-fork-reply.js").SessionForkReplySelection;
   "board-snapshot": {
     kind: "board-snapshot";
     value: BoardReadOperations["boards.readSnapshot"]["output"];
