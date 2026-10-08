@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   conversation,
-  createPluginCommandConversationForkHost,
+  createPluginCommandConversationForkHostFixture as createPluginCommandConversationForkHost,
   host,
   mocks,
 } from "./plugin-command-conversation-fork.test-fixture.js";

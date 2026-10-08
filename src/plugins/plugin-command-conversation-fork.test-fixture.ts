@@ -190,4 +190,7 @@ export function host(activeConversation = conversation) {
   });
 }
 
-export { mocks, createPluginCommandConversationForkHost };
+export {
+  mocks,
+  createPluginCommandConversationForkHost as createPluginCommandConversationForkHostFixture,
+};
