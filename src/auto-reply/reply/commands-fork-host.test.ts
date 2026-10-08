@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   conversation,
-  createNativeConversationForkHost,
+  createNativeConversationForkHostFixture as createNativeConversationForkHost,
   createUnassertedNativeConversationForkHost as createForkHost,
   host,
   mocks,

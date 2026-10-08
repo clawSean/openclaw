@@ -213,7 +213,9 @@ export function createUnassertedNativeConversationForkHost(
   return createForkHost(params);
 }
 
-export function createNativeConversationForkHost(params: Parameters<typeof createForkHost>[0]) {
+export function createNativeConversationForkHostFixture(
+  params: Parameters<typeof createForkHost>[0],
+) {
   return createForkHost({
     ...params,
     assertOwnerCurrent: params.assertOwnerCurrent ?? (() => {}),
@@ -229,7 +231,7 @@ export const conversation = {
 };
 
 export function host(activeConversation = conversation) {
-  return createNativeConversationForkHost({
+  return createNativeConversationForkHostFixture({
     config: {},
     agentId: "main",
     sessionKey: "agent:main:source",
