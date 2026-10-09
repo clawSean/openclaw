@@ -4,6 +4,7 @@ import {
   buildMentionRegexes,
   implicitMentionKindWhen,
   matchesMentionWithExplicit,
+  resolveGroupThreadMentionFacts,
   resolveInboundMentionDecision,
 } from "openclaw/plugin-sdk/channel-inbound";
 import { resolveBotThreadMentionPolicy } from "openclaw/plugin-sdk/channel-mention-gating";
@@ -264,17 +265,27 @@ export function createTelegramInboundMedia({
           authorization.authorizationCfg.channels?.telegram?.accounts?.[accountId]?.mentionPatterns,
       },
     );
+    const groupThread = resolveGroupThreadMentionFacts({
+      cfg: authorization.authorizationCfg,
+      channel: "telegram",
+      peerId: String(chatId),
+      text: textParts.text,
+      sessionKey: sessionState.sessionKey,
+      acpBinding: sessionState.bindingMode.kind === "configured",
+    });
     const hasAnyMention = textParts.entities.some((entity) => entity.type === "mention");
     const explicitlyMentioned = botUsername ? hasBotMention(msg, botUsername, ctx.me?.id) : false;
-    const wasMentioned = matchesMentionWithExplicit({
-      text: textParts.text,
-      mentionRegexes,
-      explicit: {
-        hasAnyMention,
-        isExplicitlyMentioned: explicitlyMentioned,
-        canResolveExplicit: Boolean(botUsername),
-      },
-    });
+    const wasMentioned =
+      Boolean(groupThread?.mentionedAgentIds.length) ||
+      matchesMentionWithExplicit({
+        text: textParts.text,
+        mentionRegexes,
+        explicit: {
+          hasAnyMention,
+          isExplicitlyMentioned: explicitlyMentioned,
+          canResolveExplicit: Boolean(botUsername),
+        },
+      });
     const decision = resolveInboundMentionDecision({
       facts: {
         canDetectMention: Boolean(botUsername) || mentionRegexes.length > 0,
@@ -285,7 +296,7 @@ export function createTelegramInboundMedia({
       policy: {
         isGroup,
         requireMention: true,
-        allowTextCommands: true,
+        allowTextCommands: false,
         hasControlCommand: hasControlCommandInMessage,
         commandAuthorized: commandGate.authorized,
       },
