@@ -29,6 +29,71 @@ private actor RealtimeTalkEventIterator {
 extension GatewayConnection {
     // MARK: - VoiceWake
 
+    private struct VoiceWakeTalkRoute: Decodable {
+        let sessionKey: String?
+    }
+
+    private struct VoiceWakeRoutingSnapshot: Decodable {
+        struct Target: Decodable { let mode: String? }
+        struct Route: Decodable {
+            let trigger: String
+            let target: Target
+        }
+        struct Config: Decodable {
+            let defaultTarget: Target
+            let routes: [Route]
+        }
+
+        let config: Config
+
+        func targetsCurrentSession(for trigger: String) -> Bool {
+            let normalizedTrigger = Self.normalizeTrigger(trigger)
+            let matched = normalizedTrigger.isEmpty ? nil : self.config.routes.first {
+                Self.normalizeTrigger($0.trigger) == normalizedTrigger
+            }
+            let target = matched?.target ?? self.config.defaultTarget
+            return target.mode == "current"
+        }
+
+        private static func normalizeTrigger(_ trigger: String) -> String {
+            let trimSet = CharacterSet.punctuationCharacters.union(.symbols)
+            return trigger
+                .lowercased()
+                .split(whereSeparator: { $0.isWhitespace })
+                .map { String($0).trimmingCharacters(in: trimSet) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+        }
+    }
+
+    static func _test_voiceWakeFallbackTargetsCurrentSession(trigger: String, response: Data) throws -> Bool {
+        try JSONDecoder()
+            .decode(VoiceWakeRoutingSnapshot.self, from: response)
+            .targetsCurrentSession(for: trigger)
+    }
+
+    func resolveVoiceWakeTalkSession(trigger: String) async throws -> String? {
+        do {
+            let data = try await self.request(
+                method: Method.voicewakeRoutingResolve.rawValue,
+                params: ["trigger": AnyCodable(trigger)],
+                timeoutMs: 8000)
+            return try JSONDecoder().decode(VoiceWakeTalkRoute.self, from: data).sessionKey
+        } catch {
+            // Older Gateways cannot resolve routes. Preserve the old current-session
+            // behavior only when this trigger's matched target remains current.
+            let routeError = error
+            guard let data = try? await self.request(
+                method: Method.voicewakeRoutingGet.rawValue,
+                params: nil,
+                timeoutMs: 8000),
+                let snapshot = try? JSONDecoder().decode(VoiceWakeRoutingSnapshot.self, from: data),
+                snapshot.targetsCurrentSession(for: trigger)
+            else { throw routeError }
+            return nil
+        }
+    }
+
     func voiceWakeSetTriggers(_ triggers: [String]) async {
         try? await self.requestVoid(
             method: .voicewakeSet,

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import OpenClawKit
 
@@ -20,6 +21,8 @@ final class AppVoiceRuntime {
     typealias Forward = @Sendable (String, String?) async -> Result<Void, VoiceWakeForwarder.VoiceWakeForwardError>
     typealias PublishTalk = @Sendable (Bool, String) async -> Void
     typealias Bootstrap = @Sendable () async throws -> GatewayConnection.RealtimeTalkBootstrap
+    typealias ResolveWakeSession = @Sendable (String) async throws -> String?
+    typealias PresentWakeRouteFailure = @MainActor @Sendable () -> Void
 
     struct Environment: Sendable {
         let appStatePermissions: VoicePermissions
@@ -35,6 +38,8 @@ final class AppVoiceRuntime {
         let stopSystem: @Sendable () async -> Void
         let stopMLX: @Sendable () async -> Void
         let talkBootstrap: Bootstrap
+        let resolveWakeSession: ResolveWakeSession
+        let presentWakeRouteFailure: PresentWakeRouteFailure
         let publishTalk: PublishTalk
         let forward: Forward
         let wakePresentation: VoiceWakeOverlayController.Presentation
@@ -57,6 +62,8 @@ final class AppVoiceRuntime {
             stopSystem: { await TalkSystemSpeechSynthesizer.shared.stop() },
             stopMLX: { await TalkMLXSpeechSynthesizer.shared.cancelCurrent() },
             talkBootstrap: AppVoiceRuntime.liveBootstrap,
+            resolveWakeSession: { try await GatewayConnection.shared.resolveVoiceWakeTalkSession(trigger: $0) },
+            presentWakeRouteFailure: AppVoiceRuntime.livePresentWakeRouteFailure,
             publishTalk: AppVoiceRuntime.livePublishTalk,
             forward: {
                 await VoiceWakeForwarder.forwardToSelectedSession(transcript: $0, voiceWakeTrigger: $1)
@@ -113,7 +120,9 @@ final class AppVoiceRuntime {
             sessions: sessions,
             overlay: overlay,
             permissions: environment.wakePermissions,
-            forward: environment.forward)
+            forward: environment.forward,
+            resolveWakeSession: environment.resolveWakeSession,
+            presentWakeRouteFailure: environment.presentWakeRouteFailure)
         let ptt = VoicePushToTalk(
             state: stateProvider, wake: wake, sessions: sessions, permissions: environment.pttPermissions)
         let hotkey = VoicePushToTalkHotkey(
@@ -174,5 +183,20 @@ final class AppVoiceRuntime {
 
     nonisolated static func livePublishTalk(_ enabled: Bool, _ phase: String) async {
         await GatewayConnection.shared.talkMode(enabled: enabled, phase: phase)
+    }
+
+    static func livePresentWakeRouteFailure() {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Voice Wake Could Not Start Talk"
+        alert.informativeText =
+            "OpenClaw could not resolve this wake phrase's session. " +
+            "Update the Gateway or review Voice Wake routing in Settings, then try again."
+        alert.addButton(withTitle: "Open Settings")
+        alert.addButton(withTitle: "Dismiss")
+        AppActivation.shared.presentAlert(alert) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            AppNavigationActions.openPrimaryWebRoute(DashboardRouteMap.settingsPath)
+        }
     }
 }

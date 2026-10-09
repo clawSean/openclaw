@@ -14,19 +14,25 @@ actor VoiceWakeRuntime {
     private let overlay: VoiceWakeOverlayController
     private let permissions: VoicePermissions
     private let forward: AppVoiceRuntime.Forward
+    private let resolveWakeSession: AppVoiceRuntime.ResolveWakeSession
+    private let presentWakeRouteFailure: AppVoiceRuntime.PresentWakeRouteFailure
 
     init(
         state: @escaping AppVoiceRuntime.State,
         sessions: VoiceSessionCoordinator,
         overlay: VoiceWakeOverlayController,
         permissions: VoicePermissions,
-        forward: @escaping AppVoiceRuntime.Forward)
+        forward: @escaping AppVoiceRuntime.Forward,
+        resolveWakeSession: @escaping AppVoiceRuntime.ResolveWakeSession,
+        presentWakeRouteFailure: @escaping AppVoiceRuntime.PresentWakeRouteFailure)
     {
         self.state = state
         self.sessions = sessions
         self.overlay = overlay
         self.permissions = permissions
         self.forward = forward
+        self.resolveWakeSession = resolveWakeSession
+        self.presentWakeRouteFailure = presentWakeRouteFailure
     }
 
     private let logger = Logger(subsystem: "ai.openclaw", category: "voicewake.runtime")
@@ -588,13 +594,19 @@ actor VoiceWakeRuntime {
             "voicewake runtime callback empty transcript isFinal=\(isFinal) error=\(errorSummary, privacy: .public)")
     }
 
-    private func schedulePauseCheck(triggerOnly: Bool, config: RuntimeConfig) {
+    private func schedulePauseCheck(
+        triggerOnly: Bool,
+        config: RuntimeConfig,
+        waitForPause: @escaping @Sendable (TimeInterval) async -> Bool = {
+            await SimpleTaskSupport.waitForNextOperation(interval: $0)
+        })
+    {
         self.pauseCheckTask?.cancel()
         let lastSeenAt = self.lastTranscriptAt
         let lastText = self.lastTranscript
         let window = triggerOnly ? self.triggerPauseWindow : self.preDetectSilenceWindow
         self.pauseCheckTask = Task { [weak self] in
-            guard await SimpleTaskSupport.waitForNextOperation(interval: window) else { return }
+            guard await waitForPause(window) else { return }
             await self?.checkPause(
                 lastSeenAt: lastSeenAt,
                 lastText: lastText,
@@ -644,6 +656,9 @@ actor VoiceWakeRuntime {
         } else {
             self.logger.info("voicewake runtime detected (silence fallback) len=\(command.count)")
         }
+        // This pause task has completed its debounce ownership. Relinquish it before
+        // Talk pauses Voice Wake so stop() does not cancel the activation task itself.
+        self.pauseCheckTask = nil
         await self.beginCapture(
             command: command,
             triggerEndTime: triggerEndTime,
@@ -669,15 +684,7 @@ actor VoiceWakeRuntime {
         // Pause the wake listener to avoid two audio pipelines competing on the mic
         // (mirrors the push-to-talk coordination pattern).
         if config.triggersTalkMode {
-            self.logger.info("voicewake trigger -> activating Talk Mode (skipping capture)")
-            DiagnosticsFileLog.shared.log(category: "voicewake.runtime", event: "triggerTalkMode")
-            let lease = UUID()
-            self.pauseForPushToTalk(lease: lease)
-            if config.triggerChime != .none {
-                await MainActor.run { VoiceWakeChimePlayer.play(config.triggerChime, reason: "voicewake.trigger") }
-            }
-            await self.state()?.setTalkEnabled(true)
-            await self.resumeAfterPushToTalk(lease: lease)
+            await self.startTalkMode(triggerWord: triggerWord, triggerChime: config.triggerChime)
             return
         }
         DiagnosticsFileLog.shared.log(category: "voicewake.runtime", event: "beginCapture")
@@ -717,6 +724,29 @@ actor VoiceWakeRuntime {
         self.captureTask = Task { [weak self] in
             await self?.monitorCapture(config: config)
         }
+    }
+
+    func startTalkMode(triggerWord: String?, triggerChime: VoiceWakeChime) async {
+        self.logger.info("voicewake trigger -> activating Talk Mode (skipping capture)")
+        DiagnosticsFileLog.shared.log(category: "voicewake.runtime", event: "triggerTalkMode")
+        let lease = UUID()
+        self.pauseForPushToTalk(lease: lease)
+        let wakeGeneration = self.refreshGeneration
+        if triggerChime != .none {
+            await MainActor.run { VoiceWakeChimePlayer.play(triggerChime, reason: "voicewake.trigger") }
+        }
+        do {
+            let sessionKey = try await self.resolveWakeSession(triggerWord ?? "")
+            if !Task.isCancelled, wakeGeneration == self.refreshGeneration {
+                await self.state()?.setTalkEnabled(true, sessionKeyOverride: sessionKey)
+            }
+        } catch {
+            if !Task.isCancelled, wakeGeneration == self.refreshGeneration {
+                self.logger.error("voicewake Talk route unavailable: \(error.localizedDescription, privacy: .public)")
+                await self.presentWakeRouteFailure()
+            }
+        }
+        await self.resumeAfterPushToTalk(lease: lease)
     }
 
     private func monitorCapture(config: RuntimeConfig) async {
@@ -877,5 +907,20 @@ actor VoiceWakeRuntime {
             segments: segments,
             triggerEndTime: triggerEndTime)
         return trimmed.isEmpty ? self.trimmedAfterTrigger(transcript, triggers: triggers) : trimmed
+    }
+}
+
+extension VoiceWakeRuntime {
+    func _test_scheduleRecognitionPause(
+        transcript: String,
+        config: RuntimeConfig,
+        waitForPause: @escaping @Sendable (TimeInterval) async -> Bool)
+    {
+        self.lastTranscript = transcript
+        self.lastTranscriptAt = Date()
+        self.schedulePauseCheck(
+            triggerOnly: Self.isTriggerOnlyText(transcript: transcript, triggers: config.triggers),
+            config: config,
+            waitForPause: waitForPause)
     }
 }

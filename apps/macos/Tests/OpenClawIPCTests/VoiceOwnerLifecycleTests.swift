@@ -10,6 +10,66 @@ struct VoiceOwnerLifecycleTests {
         case bootstrap
     }
 
+    @Test func `wake started Talk keeps its routed session and manual Talk returns to selection`() async throws {
+        try await withVoiceOwnerFixture(resolveWakeSession: { trigger in
+            guard trigger == "robot wake" else { throw VoiceOwnerTimeout(operation: "wrong wake trigger") }
+            return "agent:main:home-voice"
+        }) { fixture, state, _ in
+            await state.voiceRuntime.wake._test_scheduleRecognitionPause(
+                transcript: "robot wake",
+                config: .init(
+                    triggers: ["robot wake"],
+                    micID: nil,
+                    localeID: "en-US",
+                    triggerChime: .none,
+                    sendChime: .none,
+                    triggersTalkMode: true),
+                waitForPause: { _ in true })
+            try await waitForVoiceOwner("pause-triggered Talk activation") { [log = fixture.log] in
+                log.count("relay.session:agent:main:home-voice") == 1
+            }
+            #expect(fixture.log.count("relay.session:agent:main:home-voice") == 1)
+            #expect(await state.voiceRuntime.talkRuntime.selectedSessionKey() == "agent:main:home-voice")
+
+            await state.setTalkEnabled(false)
+            #expect(await state.voiceRuntime.talkRuntime.selectedSessionKey() == nil)
+            await state.setTalkEnabled(true)
+            #expect(fixture.log.count("relay.session:main") == 1)
+        }
+    }
+
+    @Test func `failed wake route never opens Talk in the selected session`() async throws {
+        try await withVoiceOwnerFixture(resolveWakeSession: { _ in
+            throw VoiceOwnerTimeout(operation: "wake route unavailable")
+        }) { fixture, state, _ in
+            await state.voiceRuntime.wake.startTalkMode(triggerWord: "robot wake", triggerChime: .none)
+            #expect(!state.talkEnabled)
+            #expect(fixture.log.count("relay.create") == 0)
+            #expect(fixture.log.count("wake.route.failure") == 1)
+        }
+    }
+
+    @Test func `older Gateway fallback checks only the matched wake route`() throws {
+        let response = Data(#"""
+        {
+          "config": {
+            "defaultTarget": { "mode": "current" },
+            "routes": [
+              { "trigger": "robot wake", "target": { "agentId": "voice" } },
+              { "trigger": "hey bot", "target": { "mode": "current" } }
+            ]
+          }
+        }
+        """#.utf8)
+
+        #expect(try GatewayConnection._test_voiceWakeFallbackTargetsCurrentSession(
+            trigger: "plain wake", response: response))
+        #expect(try GatewayConnection._test_voiceWakeFallbackTargetsCurrentSession(
+            trigger: "Hey, Bot!!", response: response))
+        #expect(try GatewayConnection._test_voiceWakeFallbackTargetsCurrentSession(
+            trigger: "ROBOT, WAKE!!", response: response) == false)
+    }
+
     @Test func `preview graph construction does not activate voice`() async throws {
         try await withVoiceOwnerFixture(activate: false) { fixture, state, _ in
             #expect(state.isPreview)
