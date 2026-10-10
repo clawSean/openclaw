@@ -12,6 +12,14 @@ import {
 } from "./attempt-client-cleanup.js";
 import type { CodexAppServerAuthRequirement, CodexAppServerPreparedAuth } from "./auth-types.js";
 import { assertCodexPrivateHookIsolation } from "./bounded-hook-policy.js";
+import {
+  readCodexBoundedTurnQuotaKind,
+  readThrownCodexBoundedTurnQuotaKind,
+  recordBoundedCodexTurnQuotaBlock,
+  resolveBoundedCodexTurnAuthPlan,
+  runBoundedCodexTurnAuthAttempts,
+  tagCodexBoundedTurnQuotaFailure,
+} from "./bounded-turn-auth-rotation.js";
 import type { CodexAppServerClient } from "./client.js";
 import { resolveCodexAppServerRuntimeOptions } from "./config.js";
 import { createCodexElicitationResponse } from "./elicitation-response.js";
@@ -43,6 +51,7 @@ import {
   buildCodexRingZeroThreadConfigPatch,
   readCodexInheritedMcpServerNames,
 } from "./thread-requests.js";
+import { withAbortableTimeout } from "./timeout.js";
 import { resolveCodexPromptError } from "./usage-limit-error.js";
 
 const CODEX_APP_SERVER_ARGS_ENV_KEY = "OPENCLAW_CODEX_APP_SERVER_ARGS";
@@ -161,6 +170,56 @@ async function runBoundedCodexAppServerTurnInWorkspace(
   const totalTimeoutMs = resolveTimerTimeoutMs(params.timeoutMs, 100, 100);
   const timeoutError = new CodexBoundedTurnTimeoutError(params.taskLabel, totalTimeoutMs);
   const deadline = performance.now() + totalTimeoutMs;
+  const homeScope = workspace.codexHome
+    ? "agent"
+    : appServer.start.homeScope === "user"
+      ? "user"
+      : "agent";
+  const plan = await withAbortableTimeout({
+    promise: resolveBoundedCodexTurnAuthPlan({
+      profile: params.profile,
+      preparedAuth: params.preparedAuth,
+      authProfileStore: params.authProfileStore,
+      agentDir: params.agentDir,
+      config: params.config,
+      hasClientFactory: Boolean(params.options.clientFactory),
+      homeScope,
+    }),
+    timeoutMs: Math.max(0, deadline - performance.now()),
+    signal: params.signal,
+    timeoutMessage: timeoutError.message,
+    createTimeoutError: () => timeoutError,
+  });
+  return await runBoundedCodexTurnAuthAttempts({
+    plan,
+    taskLabel: params.taskLabel,
+    deadline,
+    run: (profileId) =>
+      runBoundedCodexAppServerTurnAttempt(
+        {
+          ...params,
+          ...(profileId ? { profile: profileId } : {}),
+          ...(plan.agentDir ? { agentDir: plan.agentDir } : {}),
+          ...(plan.store ? { authProfileStore: plan.store } : {}),
+        },
+        appServer,
+        workspace,
+        { deadline, timeoutMs: totalTimeoutMs },
+        plan.rotate,
+      ),
+  });
+}
+
+async function runBoundedCodexAppServerTurnAttempt(
+  params: CodexBoundedTurnParams,
+  appServer: ReturnType<typeof resolveCodexAppServerRuntimeOptions>,
+  workspace: { codexHome?: string; cwd: string },
+  timing: { deadline: number; timeoutMs: number },
+  rotateQuota: boolean,
+): Promise<CodexBoundedTurnResult> {
+  const totalTimeoutMs = timing.timeoutMs;
+  const timeoutError = new CodexBoundedTurnTimeoutError(params.taskLabel, totalTimeoutMs);
+  const deadline = timing.deadline;
   const timeoutMs = deadline - performance.now();
   if (timeoutMs <= 0) {
     throw timeoutError;
@@ -187,6 +246,7 @@ async function runBoundedCodexAppServerTurnInWorkspace(
     ...authSelection,
     authRequirement: params.authRequirement,
     agentDir,
+    authProfileStore: params.authProfileStore,
     config: params.config,
     timeoutMs,
     assertCurrent: params.assertCurrent,
@@ -195,14 +255,35 @@ async function runBoundedCodexAppServerTurnInWorkspace(
   const client = params.options.clientFactory
     ? await params.options.clientFactory(clientOptions)
     : await import("./shared-client.js").then(({ createIsolatedCodexAppServerClient }) =>
-        createIsolatedCodexAppServerClient({
-          ...clientOptions,
-          authProfileStore: params.authProfileStore,
-        }),
+        createIsolatedCodexAppServerClient(clientOptions),
       );
   const abortController = new AbortController();
   let activeThreadId: string | undefined;
   let activeTurnId = "";
+  let selectedModelId: string | undefined;
+  let quotaRecorded = false;
+  const recordQuotaBlock = async (
+    kind: NonNullable<ReturnType<typeof readCodexBoundedTurnQuotaKind>>,
+    error: unknown,
+    source?: { message?: string | null; codexErrorInfo?: JsonValue | null; rateLimits?: JsonValue },
+  ) => {
+    if (!rotateQuota || quotaRecorded) {
+      return;
+    }
+    quotaRecorded = true;
+    await recordBoundedCodexTurnQuotaBlock({
+      client,
+      kind,
+      error,
+      source,
+      profileId: params.profile,
+      store: params.authProfileStore,
+      agentDir,
+      modelId: selectedModelId,
+      timeoutMs: Math.max(0, deadline - performance.now()),
+      signal: abortController.signal,
+    });
+  };
   let interruptPromise: Promise<boolean> | undefined;
   const requestInterrupt = () => {
     if (!activeThreadId || interruptPromise) {
@@ -245,6 +326,7 @@ async function runBoundedCodexAppServerTurnInWorkspace(
       requiredModalities: params.requiredModalities,
       ...requestOptions,
     });
+    selectedModelId = modelSelection.id;
     const inheritedMcpServerNames = params.requireNoExternalCapabilities
       ? await readCodexInheritedMcpServerNames(client, workspace.cwd, abortController.signal)
       : [];
@@ -360,9 +442,16 @@ async function runBoundedCodexAppServerTurnInWorkspace(
           ? readCodexErrorNotification(result.error)?.error
           : result.turn?.error;
         const failure = source ? resolveCodexPromptError(source) : undefined;
-        throw failure instanceof Error
-          ? failure
-          : new Error(failure ?? `codex app-server ${params.taskLabel} turn failed`);
+        const error =
+          failure instanceof Error
+            ? failure
+            : new Error(failure ?? `codex app-server ${params.taskLabel} turn failed`);
+        const quota = readCodexBoundedTurnQuotaKind(source);
+        if (rotateQuota && quota) {
+          tagCodexBoundedTurnQuotaFailure(error, quota);
+          await recordQuotaBlock(quota, error, source ?? undefined);
+        }
+        throw error;
       }
       if (result.turn?.status !== "completed") {
         throw new Error(
@@ -406,6 +495,13 @@ async function runBoundedCodexAppServerTurnInWorkspace(
         params.taskLabel,
         timeoutError,
       );
+    }
+    const quota = readThrownCodexBoundedTurnQuotaKind(error);
+    if (rotateQuota && quota) {
+      if (error instanceof Error) {
+        tagCodexBoundedTurnQuotaFailure(error, quota);
+      }
+      await recordQuotaBlock(quota, error);
     }
     throw codexPrewriteRejectionCause(error);
   } finally {
