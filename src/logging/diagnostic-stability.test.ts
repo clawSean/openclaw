@@ -81,6 +81,7 @@ describe("diagnostic stability recorder", () => {
       count: 2,
       intervalMs: 60_000,
     });
+    emitInternalDiagnosticEvent({ type: "gateway.http.cancelled", source: "client" });
     emitDiagnosticEvent({
       type: "worker.request",
       kind: "sessionTranscript",
@@ -88,9 +89,7 @@ describe("diagnostic stability recorder", () => {
       phase: "queued",
       queueDepth: 1,
     });
-    await new Promise<void>((resolve) => {
-      setImmediate(resolve);
-    });
+    await waitForDiagnosticEventsDrained();
 
     const snapshot = getDiagnosticStabilitySnapshot({ limit: 10 });
 
@@ -349,6 +348,8 @@ describe("diagnostic stability recorder", () => {
       requestPayloadBytes: 1234,
       responseStreamBytes: 567,
       timeToFirstByteMs: 89,
+      providerProcessingMs: 0.25,
+      providerWaitEstimateMs: 0.75,
       errorCategory: "TypeError",
       failureKind: "terminated",
       memory: {
@@ -359,9 +360,7 @@ describe("diagnostic stability recorder", () => {
         arrayBuffersBytes: 10,
       },
     });
-    await new Promise<void>((resolve) => {
-      setImmediate(resolve);
-    });
+    await waitForDiagnosticEventsDrained();
 
     const snapshot = getDiagnosticStabilitySnapshot({ limit: 10 });
 
@@ -378,6 +377,8 @@ describe("diagnostic stability recorder", () => {
       requestBytes: 1234,
       responseBytes: 567,
       timeToFirstByteMs: 89,
+      providerProcessingMs: 0.25,
+      providerWaitEstimateMs: 0.75,
       reason: "TypeError",
       failureKind: "terminated",
       memory: {
