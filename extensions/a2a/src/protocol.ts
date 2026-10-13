@@ -118,12 +118,12 @@ const A2A_UNSUPPORTED_PUSH_METHODS = new Set([
 
 export function resolveA2aRpcMethod(
   method: string,
-): A2aCanonicalMethod | "unsupported" | "push-unsupported" | undefined {
+): A2aCanonicalMethod | "unsupported" | undefined {
   if (Object.hasOwn(A2A_METHOD_ALIASES, method)) {
     return A2A_METHOD_ALIASES[method];
   }
   if (A2A_UNSUPPORTED_PUSH_METHODS.has(method)) {
-    return "push-unsupported";
+    throw new A2aProtocolError(-32003, "Push notifications are not supported");
   }
   return A2A_UNSUPPORTED_METHODS.has(method) ? "unsupported" : undefined;
 }

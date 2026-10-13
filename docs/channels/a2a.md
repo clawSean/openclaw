@@ -185,7 +185,7 @@ Outbound destinations come only from operator-configured peer URLs. Inbound call
 
 The current plugin supports text messages and structured JSON data parts, which are appended as compact JSON text. File URL and raw binary parts are ignored. Streaming, server-sent events, push notifications, task cancellation, task listing, extended Agent Cards, and multi-tenant routing are not supported.
 
-Recognized push notification configuration methods return JSON-RPC error `-32003` (`PushNotificationNotSupportedError`). Other recognized unsupported methods return `-32004`; unknown method names return `-32601`.
+The Agent Card advertises `pushNotifications: false`. Push notification configuration methods return JSON-RPC error `-32003` (`PushNotificationNotSupportedError`), as required by the [A2A 1.0 specification](https://a2a-protocol.org/v1.0.0/specification/#334-capability-validation). Other recognized unsupported methods return `-32004`; unknown method names return `-32601`.
 
 Tasks remain in memory only. Completed and other terminal tasks are retained for up to 24 hours, with a maximum of 500 retained entries. Restarting the gateway discards all tasks and task history.
 
