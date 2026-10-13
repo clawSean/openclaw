@@ -1,6 +1,7 @@
 import { formatErrorMessage } from "../infra/errors.js";
 import { LegacyPluginSdkResourceHost } from "../plugins/legacy-sdk-resource-host.js";
 import { hasRetainedPluginRuntimeCloseError } from "../plugins/runtime-close-error.js";
+import { runOutsideAsyncWorkScope } from "../shared/async-work-scope.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { bumpSkillsSnapshotVersion } from "../skills/runtime/refresh-state.js";
 import { createGatewayKernel, gatewayKernelLogs } from "./server-kernel.js";
@@ -19,8 +20,11 @@ export async function startGatewayServerCore(
   opts: GatewayServerOptions = {},
 ): Promise<GatewayServer> {
   const sdkResourceHost = new LegacyPluginSdkResourceHost();
+  // Join startup through its returned promise without giving resident listeners the boot scope.
   const start = (signal?: AbortSignal) =>
-    startGatewayServerWithSdkHost(port, opts, sdkResourceHost, signal);
+    runOutsideAsyncWorkScope(() =>
+      startGatewayServerWithSdkHost(port, opts, sdkResourceHost, signal),
+    );
   return await sdkResourceHost.run(() =>
     opts.startupOperation ? opts.startupOperation(start) : start(),
   );
@@ -35,6 +39,7 @@ async function startGatewayServerWithSdkHost(
   const { promise: postReadyWorkBarrier, resolve: releasePostReadyWork } = createDeferredCore();
   const gatewayKernel = await createGatewayKernel(port, opts, {
     deferEarlyRuntime: true,
+    deferRequestRuntime: true,
     sdkResourceHost,
   });
   // A Gateway restart must refresh restored skill catalogs, even in the same process.
@@ -51,6 +56,8 @@ async function startGatewayServerWithSdkHost(
   try {
     const transport = await createGatewayHttpTransport({
       ...gatewayKernel.createHttpTransportOptions(),
+      httpRequestLifetime: gatewayKernel.gatewayRequestContext,
+      waitForRequestRuntime: gatewayKernel.ensureRequestRuntimeReady,
       updateCanary: opts.updateCanary,
       ...(!gatewayKernel.minimalTestGateway && gatewayKernel.tailscaleMode !== "off"
         ? {
