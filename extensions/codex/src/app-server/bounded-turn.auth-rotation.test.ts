@@ -16,12 +16,21 @@ type RecordedQuotaBlock = {
 const markAuthProfileBlockedUntil = vi.hoisted(() =>
   vi.fn(async (_params: RecordedQuotaBlock) => {}),
 );
+const resolveCodexAppServerAuthProfileStore = vi.hoisted(() => vi.fn());
 
 vi.mock("openclaw/plugin-sdk/agent-runtime", async (importOriginal) => {
   const actual = await importOriginal<typeof import("openclaw/plugin-sdk/agent-runtime")>();
   return {
     ...actual,
     markAuthProfileBlockedUntil,
+  };
+});
+
+vi.mock("./auth-profile.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./auth-profile.js")>();
+  return {
+    ...actual,
+    resolveCodexAppServerAuthProfileStore,
   };
 });
 
@@ -83,9 +92,66 @@ function turnDefaults() {
 
 beforeEach(() => {
   markAuthProfileBlockedUntil.mockReset();
+  resolveCodexAppServerAuthProfileStore.mockReset();
+  resolveCodexAppServerAuthProfileStore.mockImplementation(
+    async (params: { authProfileStore?: AuthProfileStore }) => {
+      if (!params.authProfileStore) {
+        throw new Error("test auth store is required");
+      }
+      return params.authProfileStore;
+    },
+  );
 });
 
 describe("bounded Codex turn auth profile rotation", () => {
+  it("cancels while automatic auth planning is pending", async () => {
+    const controller = new AbortController();
+    resolveCodexAppServerAuthProfileStore.mockReturnValueOnce(
+      new Promise<AuthProfileStore>(() => {}),
+    );
+
+    const run = runBoundedCodexAppServerTurn({
+      ...turnDefaults(),
+      authProfileStore: undefined,
+      signal: controller.signal,
+      isolation: "configured-transport",
+      options: {},
+    });
+    expect(resolveCodexAppServerAuthProfileStore).toHaveBeenCalledOnce();
+
+    controller.abort(new Error("search cancelled"));
+
+    await expect(run).rejects.toThrow("search cancelled");
+  });
+
+  it("times out while automatic auth planning is pending", async () => {
+    vi.useFakeTimers();
+    try {
+      resolveCodexAppServerAuthProfileStore.mockReturnValueOnce(
+        new Promise<AuthProfileStore>(() => {}),
+      );
+
+      const run = runBoundedCodexAppServerTurn({
+        ...turnDefaults(),
+        authProfileStore: undefined,
+        timeoutMs: 100,
+        isolation: "configured-transport",
+        options: {},
+      });
+      expect(resolveCodexAppServerAuthProfileStore).toHaveBeenCalledOnce();
+      const rejection = run.catch((error: unknown) => error);
+
+      await vi.advanceTimersByTimeAsync(100);
+
+      await expect(rejection).resolves.toMatchObject({
+        name: "TimeoutError",
+        message: "codex app-server hosted search turn timed out after 100ms",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("rotates an automatic profile after a structured usage limit and records the reset", async () => {
     const limited = createClientFactory({
       terminalStatus: "failed",

@@ -51,6 +51,7 @@ import {
   buildCodexRingZeroThreadConfigPatch,
   readCodexInheritedMcpServerNames,
 } from "./thread-requests.js";
+import { withAbortableTimeout } from "./timeout.js";
 import { resolveCodexPromptError } from "./usage-limit-error.js";
 
 const CODEX_APP_SERVER_ARGS_ENV_KEY = "OPENCLAW_CODEX_APP_SERVER_ARGS";
@@ -164,6 +165,7 @@ async function runBoundedCodexAppServerTurnInWorkspace(
   workspace: { codexHome?: string; cwd: string },
 ): Promise<CodexBoundedTurnResult> {
   const totalTimeoutMs = resolveTimerTimeoutMs(params.timeoutMs, 100, 100);
+  const timeoutError = new CodexBoundedTurnTimeoutError(params.taskLabel, totalTimeoutMs);
   const deadline = performance.now() + totalTimeoutMs;
   // Private turns force an agent home even when the operator's harness is native.
   const homeScope = workspace.codexHome
@@ -171,14 +173,20 @@ async function runBoundedCodexAppServerTurnInWorkspace(
     : appServer.start.homeScope === "user"
       ? "user"
       : "agent";
-  const plan = await resolveBoundedCodexTurnAuthPlan({
-    profile: params.profile,
-    preparedAuth: params.preparedAuth,
-    authProfileStore: params.authProfileStore,
-    agentDir: params.agentDir,
-    config: params.config,
-    hasClientFactory: Boolean(params.options.clientFactory),
-    homeScope,
+  const plan = await withAbortableTimeout({
+    promise: resolveBoundedCodexTurnAuthPlan({
+      profile: params.profile,
+      preparedAuth: params.preparedAuth,
+      authProfileStore: params.authProfileStore,
+      agentDir: params.agentDir,
+      config: params.config,
+      hasClientFactory: Boolean(params.options.clientFactory),
+      homeScope,
+    }),
+    timeoutMs: Math.max(0, deadline - performance.now()),
+    signal: params.signal,
+    timeoutMessage: timeoutError.message,
+    createTimeoutError: () => timeoutError,
   });
   return await runBoundedCodexTurnAuthAttempts({
     plan,
