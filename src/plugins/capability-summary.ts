@@ -210,6 +210,9 @@ export function buildPluginCapabilitySummary(params: {
               ...(llm.allowAuthProfileOverride !== undefined
                 ? { allowAuthProfileOverride: llm.allowAuthProfileOverride }
                 : {}),
+              ...(llm.allowPluginOwnedModelAuthority !== undefined
+                ? { allowPluginOwnedModelAuthority: llm.allowPluginOwnedModelAuthority }
+                : {}),
               ...(llm.allowAgentIdOverride !== undefined
                 ? { allowAgentIdOverride: llm.allowAgentIdOverride }
                 : {}),

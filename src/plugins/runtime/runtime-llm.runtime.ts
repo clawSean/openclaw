@@ -69,6 +69,7 @@ type RuntimeLlmPolicy = {
   allowAgentIdOverride: boolean;
   allowModelOverride: boolean;
   allowAuthProfileOverride: boolean;
+  allowPluginOwnedModelAuthority: boolean;
   overrideModels: CompiledModelAllowlist;
   completionModels: CompiledModelAllowlist;
 };
@@ -285,6 +286,7 @@ function buildPolicyFromEntry(entry: {
   allowAgentIdOverride?: boolean;
   allowModelOverride?: boolean;
   allowAuthProfileOverride?: boolean;
+  allowPluginOwnedModelAuthority?: boolean;
   hasAllowedModelsConfig?: boolean;
   allowedModels?: readonly string[];
   hasAllowedCompletionModelsConfig?: boolean;
@@ -294,6 +296,7 @@ function buildPolicyFromEntry(entry: {
     allowAgentIdOverride: entry.allowAgentIdOverride === true,
     allowModelOverride: entry.allowModelOverride === true,
     allowAuthProfileOverride: entry.allowAuthProfileOverride === true,
+    allowPluginOwnedModelAuthority: entry.allowPluginOwnedModelAuthority === true,
     overrideModels: compileModelAllowlist({
       configured: entry.hasAllowedModelsConfig === true,
       values: entry.allowedModels,
@@ -373,6 +376,29 @@ function assertAllowedAuthProfileOverride(params: {
     "LLM_COMPLETION_NOT_AUTHORIZED",
     "Plugin LLM completion cannot override the auth profile. Enable plugins.entries.<id>.llm.allowAuthProfileOverride to authorize it.",
   );
+}
+
+function assertAllowedPluginOwnedModelAuthority(params: {
+  pluginPolicyId: string | undefined;
+  pluginPolicy: RuntimeLlmPolicy | undefined;
+}): void {
+  if (!params.pluginPolicyId || params.pluginPolicy?.allowPluginOwnedModelAuthority !== true) {
+    throw completionError(
+      "LLM_COMPLETION_NOT_AUTHORIZED",
+      "Plugin-owned model authority is not enabled for this plugin.",
+    );
+  }
+  const completionModels = params.pluginPolicy.completionModels;
+  if (
+    !completionModels.configured ||
+    completionModels.allowAny ||
+    completionModels.models.size === 0
+  ) {
+    throw completionError(
+      "LLM_COMPLETION_NOT_AUTHORIZED",
+      "Plugin-owned model authority requires an exact non-empty allowedCompletionModels allowlist.",
+    );
+  }
 }
 
 function assertModelAllowed(params: {
@@ -475,6 +501,11 @@ export function createRuntimeLlm(
       ]);
       const pluginPolicyId = resolvePluginPolicyId(options.authority, caller);
       const pluginPolicy = resolvePluginLlmPolicy(cfg, pluginPolicyId);
+      const usePluginOwnedModelAuthority =
+        isIsolatedAgentRuntimeRequest(params) && params.execution.modelAuthority === "plugin";
+      if (usePluginOwnedModelAuthority) {
+        assertAllowedPluginOwnedModelAuthority({ pluginPolicyId, pluginPolicy });
+      }
       const authorityPolicy = resolveAuthorityModelPolicy(options.authority);
       const preferredProfile = normalizeOptionalString(options.authority?.preferredProfile);
       const audit = {
@@ -506,7 +537,7 @@ export function createRuntimeLlm(
       }
       const normalizedSelection = normalizeModelRef(selection.provider, selection.modelId);
       assertCurrent();
-      source.assertModelAllowed(normalizedSelection);
+      source.assertModelAllowed(normalizedSelection, { usePluginOwnedModelAuthority });
       const resolvedModelRef = modelKey(normalizedSelection.provider, normalizedSelection.model);
       assertModelAllowed({ kind: "completion", resolvedModelRef, policy: authorityPolicy });
       assertModelAllowed({
@@ -554,7 +585,7 @@ export function createRuntimeLlm(
           // an unbound call may fall back to the agent's configured selection.
           authProfileId:
             executionProfile ?? requestedModelProfile ?? preferredProfile ?? modelProfile,
-          operatorAuthority,
+          operatorAuthority: usePluginOwnedModelAuthority ? undefined : operatorAuthority,
           assertCurrent,
         });
         assertCurrent();
@@ -721,3 +752,5 @@ export function createRuntimeLlm(
     }),
   };
 }
+
+/* oxlint-disable max-lines -- Version-pinned backport preserves the 2026.10.3 embedded policy layout. */

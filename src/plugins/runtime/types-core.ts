@@ -274,6 +274,8 @@ export type LlmIsolatedAgentRuntimeCompleteParams = LlmCompleteCommonParams & {
      * Agents API may retain service-owned helpers; it cannot guarantee zero tools.
      */
     mode: "isolated-agent-runtime";
+    /** Use the calling plugin's exact host allowlist instead of the invoking operator's model policy. */
+    modelAuthority?: "plugin";
     /** Exact credential owner. Requires host-granted plugin policy. */
     authProfileId?: string;
     timeoutMs?: number;

@@ -38,6 +38,7 @@ export type NormalizedPluginsConfig = {
         allowedCompletionModels?: string[];
         hasAllowedCompletionModelsConfig?: boolean;
         allowAuthProfileOverride?: boolean;
+        allowPluginOwnedModelAuthority?: boolean;
         allowAgentIdOverride?: boolean;
       };
       config?: unknown;
@@ -131,7 +132,11 @@ function normalizePluginModelConfig(
     }
   }
   if (kind === "llm") {
-    for (const key of ["allowAuthProfileOverride", "allowAgentIdOverride"] as const) {
+    for (const key of [
+      "allowAuthProfileOverride",
+      "allowPluginOwnedModelAuthority",
+      "allowAgentIdOverride",
+    ] as const) {
       if (typeof value[key] === "boolean") {
         config[key] = value[key];
       }

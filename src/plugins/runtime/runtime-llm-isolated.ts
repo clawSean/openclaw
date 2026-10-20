@@ -70,6 +70,14 @@ export function assertSupportedExecutionMode(params: LlmCompleteParams): void {
       'Plugin LLM completion execution.mode must be "isolated-agent-runtime" when execution is provided.',
     );
   }
+  // SAFETY: the guard above established that execution is a non-array object.
+  const modelAuthority = (execution as { modelAuthority?: unknown }).modelAuthority;
+  if (modelAuthority !== undefined && modelAuthority !== "plugin") {
+    throw completionError(
+      "LLM_ISOLATED_INPUT_REJECTED",
+      'Plugin LLM completion execution.modelAuthority must be "plugin" when provided.',
+    );
+  }
   if (
     ("requiredAuthMode" in params && params.requiredAuthMode !== undefined) ||
     ("responseFormat" in params && params.responseFormat !== undefined)

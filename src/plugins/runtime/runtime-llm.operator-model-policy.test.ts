@@ -21,6 +21,7 @@ import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import {
   getPluginRuntimeGatewayRequestScope,
   withPluginRuntimeGatewayRequestScope,
+  withPluginRuntimePluginScope,
 } from "./gateway-request-scope.js";
 import { createRuntimeLlm } from "./runtime-llm.runtime.js";
 import type { LlmCompleteParams, LlmIsolatedAgentRuntimeCompleteParams } from "./types-core.js";
@@ -499,6 +500,212 @@ describe("operator model policy on plugin completions", () => {
       withWork(() => asOperator(operator(), () => completion().complete(request("direct")))),
     ).resolves.toMatchObject({ text: "Allowed answer." });
     expect(mocks.complete).toHaveBeenCalledOnce();
+  });
+
+  it("lets an opted-in plugin use its exact isolated model allowlist", async () => {
+    const pluginCfg: OpenClawConfig = {
+      ...cfg,
+      plugins: {
+        entries: {
+          mailreef: {
+            enabled: true,
+            llm: {
+              allowModelOverride: true,
+              allowedModels: ["test-provider/allowed"],
+              allowedCompletionModels: ["test-provider/allowed"],
+              allowPluginOwnedModelAuthority: true,
+            },
+          },
+        },
+      },
+    };
+    const llm = createRuntimeLlm({
+      getConfig: () => pluginCfg,
+      authority: { allowComplete: true },
+    });
+    const callerAuthority = createAdmittedRunOperatorAuthority({
+      profileId: "model-reader",
+      scopes: ["operator.write"],
+      assertCurrent: () => {},
+      modelPolicy: prepareOperatorModelPolicy({
+        cfg,
+        policy: { sourceAgent: "main", allow: ["test-provider/blocked"] },
+        manifestPlugins: [],
+      }),
+    });
+
+    await expect(
+      withWork(() =>
+        withPluginRuntimePluginScope({ pluginId: "mailreef" }, () =>
+          asOperator(callerAuthority, () =>
+            llm.complete({
+              messages: [{ role: "user", content: "Screen the synthetic message." }],
+              model: "friendly-alias",
+              execution: { mode: "isolated-agent-runtime", modelAuthority: "plugin" },
+            }),
+          ),
+        ),
+      ),
+    ).resolves.toMatchObject({ text: "Allowed answer." });
+    expect(mocks.isolated).toHaveBeenCalledOnce();
+    expect(mocks.isolated.mock.calls[0]?.[0].operatorAuthority).toBeUndefined();
+  });
+
+  it.each([
+    {
+      name: "the plugin opt-in is absent",
+      policy: {
+        allowModelOverride: true,
+        allowedModels: ["test-provider/allowed"],
+        allowedCompletionModels: ["test-provider/allowed"],
+      },
+      message: "not enabled",
+    },
+    {
+      name: "the completion allowlist is wildcarded",
+      policy: {
+        allowModelOverride: true,
+        allowedModels: ["test-provider/allowed"],
+        allowedCompletionModels: ["*"],
+        allowPluginOwnedModelAuthority: true,
+      },
+      message: "exact non-empty",
+    },
+  ])("denies plugin-owned model authority when $name", async ({ policy, message }) => {
+    const pluginCfg: OpenClawConfig = {
+      ...cfg,
+      plugins: { entries: { mailreef: { enabled: true, llm: policy } } },
+    };
+    const llm = createRuntimeLlm({
+      getConfig: () => pluginCfg,
+      authority: { allowComplete: true },
+    });
+
+    await expect(
+      withWork(() =>
+        withPluginRuntimePluginScope({ pluginId: "mailreef" }, () =>
+          asOperator(operator(), () =>
+            llm.complete({
+              messages: [{ role: "user", content: "Screen the synthetic message." }],
+              model: "friendly-alias",
+              execution: { mode: "isolated-agent-runtime", modelAuthority: "plugin" },
+            }),
+          ),
+        ),
+      ),
+    ).rejects.toMatchObject({
+      code: "LLM_COMPLETION_NOT_AUTHORIZED",
+      message: expect.stringContaining(message),
+    });
+    expect(mocks.isolated).not.toHaveBeenCalled();
+  });
+
+  it("denies a model outside the plugin-owned completion allowlist", async () => {
+    mocks.select.mockReturnValue({ ...selection, modelId: "blocked" });
+    const pluginCfg: OpenClawConfig = {
+      ...cfg,
+      plugins: {
+        entries: {
+          mailreef: {
+            enabled: true,
+            llm: {
+              allowModelOverride: true,
+              allowedModels: ["test-provider/allowed"],
+              allowedCompletionModels: ["test-provider/allowed"],
+              allowPluginOwnedModelAuthority: true,
+            },
+          },
+        },
+      },
+    };
+    const llm = createRuntimeLlm({
+      getConfig: () => pluginCfg,
+      authority: { allowComplete: true },
+    });
+
+    await expect(
+      withWork(() =>
+        withPluginRuntimePluginScope({ pluginId: "mailreef" }, () =>
+          asOperator(operator(), () =>
+            llm.complete({
+              messages: [{ role: "user", content: "Screen the synthetic message." }],
+              model: "friendly-alias",
+              execution: { mode: "isolated-agent-runtime", modelAuthority: "plugin" },
+            }),
+          ),
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "LLM_COMPLETION_NOT_AUTHORIZED" });
+    expect(mocks.isolated).not.toHaveBeenCalled();
+  });
+
+  it("keeps plugin-owned model calls bound to requester liveness", async () => {
+    const started = createDeferredCore();
+    const resume = createDeferredCore();
+    let active = true;
+    const release = vi.fn();
+    const retain = vi.fn(() => release);
+    const authority = operator(() => {
+      if (!active) {
+        throw new Error("requester retired");
+      }
+    }, retain);
+    const pluginCfg: OpenClawConfig = {
+      ...cfg,
+      plugins: {
+        entries: {
+          mailreef: {
+            enabled: true,
+            llm: {
+              allowModelOverride: true,
+              allowedModels: ["test-provider/allowed"],
+              allowedCompletionModels: ["test-provider/allowed"],
+              allowPluginOwnedModelAuthority: true,
+            },
+          },
+        },
+      },
+    };
+    const llm = createRuntimeLlm({
+      getConfig: () => pluginCfg,
+      authority: { allowComplete: true },
+    });
+    mocks.isolated.mockImplementation(async (params) => {
+      started.resolve();
+      await resume.promise;
+      params.assertCurrent?.();
+      return {
+        text: "Allowed answer.",
+        provider: "test-provider",
+        model: "allowed",
+        owner: { kind: "harness", id: "test-harness" },
+      };
+    });
+    const pending = withWork(() =>
+      withPluginRuntimePluginScope({ pluginId: "mailreef" }, () =>
+        asOperator(authority, () =>
+          llm.complete({
+            messages: [{ role: "user", content: "Screen the synthetic message." }],
+            model: "friendly-alias",
+            execution: { mode: "isolated-agent-runtime", modelAuthority: "plugin" },
+          }),
+        ),
+      ),
+    );
+    await Promise.race([
+      started.promise,
+      pending.then(() => {
+        throw new Error("completion settled before work started");
+      }),
+    ]);
+    active = false;
+    resume.resolve();
+
+    await expect(pending).rejects.toMatchObject({
+      code: "LLM_COMPLETION_NOT_AUTHORIZED",
+      message: "requester retired",
+    });
+    expect(release).toHaveBeenCalledTimes(retain.mock.calls.length);
   });
 
   it("keeps the host-bound context engine independent of the ambient requester", async () => {
