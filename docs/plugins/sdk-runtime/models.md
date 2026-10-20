@@ -158,6 +158,21 @@ Backend adapters retain protocol validation and special-mode handling.
     before inference. `result.execution.owner` reports the selected owner;
     token usage remains absent when a CLI cannot report it.
 
+    `execution.modelAuthority: "plugin"` keeps invocation cancellation and
+    liveness bound to the requester while authorizing the selected model only
+    through the calling plugin's host policy. It requires
+    `plugins.entries.<id>.llm.allowPluginOwnedModelAuthority: true` and an exact,
+    non-empty `allowedCompletionModels` list; wildcard authority is rejected.
+    Direct-provider completions remain requester-bound.
+
+    ```typescript
+    await api.runtime.llm.complete({
+      messages: [{ role: "user", content: "Screen this value." }],
+      model: "openai/gpt-6-luna",
+      execution: { mode: "isolated-agent-runtime", modelAuthority: "plugin" },
+    });
+    ```
+
     Agents API has a documented exception to the literal zero-tool guarantee:
     its restricted sessions may retain service-owned helpers despite having no
     executor or supplied tools. Output rejection cannot prevent those helpers

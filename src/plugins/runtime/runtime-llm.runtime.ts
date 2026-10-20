@@ -24,6 +24,7 @@ import {
   assertAllowedAuthProfileOverride,
   assertAllowedCompletionModel,
   assertAllowedModelOverride,
+  assertAllowedPluginOwnedModelAuthority,
   resolveAllowAgentIdOverride,
   resolveAuthorityModelPolicy,
   resolvePluginLlmPolicy,
@@ -195,6 +196,11 @@ export function createRuntimeLlm(
       ]);
       const pluginPolicyId = resolvePluginPolicyId(options.authority, caller);
       const pluginPolicy = resolvePluginLlmPolicy(cfg, pluginPolicyId);
+      const usePluginOwnedModelAuthority =
+        isIsolatedAgentRuntimeRequest(params) && params.execution.modelAuthority === "plugin";
+      if (usePluginOwnedModelAuthority) {
+        assertAllowedPluginOwnedModelAuthority({ pluginPolicyId, pluginPolicy });
+      }
       const authorityPolicy = resolveAuthorityModelPolicy(options.authority);
       const preferredProfile = normalizeOptionalString(options.authority?.preferredProfile);
       const audit = {
@@ -226,7 +232,7 @@ export function createRuntimeLlm(
       }
       const normalizedSelection = normalizeModelRef(selection.provider, selection.modelId);
       assertCurrent();
-      source.assertModelAllowed(normalizedSelection);
+      source.assertModelAllowed(normalizedSelection, { usePluginOwnedModelAuthority });
       const resolvedModelRef = modelKey(normalizedSelection.provider, normalizedSelection.model);
       // Host and operator restrictions intersect, with completion policy checked first.
       assertAllowedCompletionModel({
@@ -274,7 +280,7 @@ export function createRuntimeLlm(
           // an unbound call may fall back to the agent's configured selection.
           authProfileId:
             executionProfile ?? requestedModelProfile ?? preferredProfile ?? modelProfile,
-          operatorAuthority,
+          operatorAuthority: usePluginOwnedModelAuthority ? undefined : operatorAuthority,
           assertCurrent,
         });
         assertCurrent();

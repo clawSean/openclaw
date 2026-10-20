@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   assertAllowedCompletionModel,
   assertAllowedModelOverride,
+  assertAllowedPluginOwnedModelAuthority,
   resolveAuthorityModelPolicy,
+  resolvePluginLlmPolicy,
 } from "./runtime-model-policy.js";
 
 describe("shared runtime model policy", () => {
@@ -32,4 +34,45 @@ describe("shared runtime model policy", () => {
       expect(() => check(["fixture/selected"], ["*"])).not.toThrow();
     },
   );
+
+  it.each([
+    { name: "missing opt-in", llm: { allowedCompletionModels: ["fixture/selected"] } },
+    {
+      name: "wildcard allowlist",
+      llm: { allowPluginOwnedModelAuthority: true, allowedCompletionModels: ["*"] },
+    },
+    {
+      name: "empty allowlist",
+      llm: { allowPluginOwnedModelAuthority: true, allowedCompletionModels: [] },
+    },
+  ])("rejects plugin-owned authority with $name", ({ llm }) => {
+    const pluginPolicy = resolvePluginLlmPolicy(
+      { plugins: { entries: { mailreef: { llm } } } },
+      "mailreef",
+    );
+    expect(() =>
+      assertAllowedPluginOwnedModelAuthority({ pluginPolicyId: "mailreef", pluginPolicy }),
+    ).toThrow();
+  });
+
+  it("accepts plugin-owned authority with an exact completion allowlist", () => {
+    const pluginPolicy = resolvePluginLlmPolicy(
+      {
+        plugins: {
+          entries: {
+            mailreef: {
+              llm: {
+                allowPluginOwnedModelAuthority: true,
+                allowedCompletionModels: ["fixture/selected"],
+              },
+            },
+          },
+        },
+      },
+      "mailreef",
+    );
+    expect(() =>
+      assertAllowedPluginOwnedModelAuthority({ pluginPolicyId: "mailreef", pluginPolicy }),
+    ).not.toThrow();
+  });
 });

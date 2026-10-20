@@ -31,6 +31,7 @@ type RuntimeLlmPolicy = {
   allowAgentIdOverride: boolean;
   allowModelOverride: boolean;
   allowAuthProfileOverride: boolean;
+  allowPluginOwnedModelAuthority: boolean;
   overrideModels: CompiledModelAllowlist;
   completionModels: CompiledModelAllowlist;
 };
@@ -101,6 +102,7 @@ function buildPolicyFromEntry(entry: {
   allowAgentIdOverride?: boolean;
   allowModelOverride?: boolean;
   allowAuthProfileOverride?: boolean;
+  allowPluginOwnedModelAuthority?: boolean;
   hasAllowedModelsConfig?: boolean;
   allowedModels?: readonly string[];
   hasAllowedCompletionModelsConfig?: boolean;
@@ -110,6 +112,7 @@ function buildPolicyFromEntry(entry: {
     allowAgentIdOverride: entry.allowAgentIdOverride === true,
     allowModelOverride: entry.allowModelOverride === true,
     allowAuthProfileOverride: entry.allowAuthProfileOverride === true,
+    allowPluginOwnedModelAuthority: entry.allowPluginOwnedModelAuthority === true,
     overrideModels: compileModelAllowlist({
       configured: entry.hasAllowedModelsConfig === true,
       values: entry.allowedModels,
@@ -190,6 +193,29 @@ export function assertAllowedAuthProfileOverride(params: {
     "LLM_COMPLETION_NOT_AUTHORIZED",
     "Plugin LLM completion cannot override the auth profile. Enable plugins.entries.<id>.llm.allowAuthProfileOverride to authorize it.",
   );
+}
+
+export function assertAllowedPluginOwnedModelAuthority(params: {
+  pluginPolicyId: string | undefined;
+  pluginPolicy: RuntimeLlmPolicy | undefined;
+}): void {
+  if (!params.pluginPolicyId || params.pluginPolicy?.allowPluginOwnedModelAuthority !== true) {
+    throw completionError(
+      "LLM_COMPLETION_NOT_AUTHORIZED",
+      "Plugin-owned model authority is not enabled for this plugin.",
+    );
+  }
+  const completionModels = params.pluginPolicy.completionModels;
+  if (
+    !completionModels.configured ||
+    completionModels.allowAny ||
+    completionModels.models.size === 0
+  ) {
+    throw completionError(
+      "LLM_COMPLETION_NOT_AUTHORIZED",
+      "Plugin-owned model authority requires an exact non-empty allowedCompletionModels allowlist.",
+    );
+  }
 }
 
 function assertModelAllowed(params: {

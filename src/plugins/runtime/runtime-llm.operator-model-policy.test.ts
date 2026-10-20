@@ -26,6 +26,7 @@ import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import {
   getPluginRuntimeGatewayRequestScope,
   withPluginRuntimeGatewayRequestScope,
+  withPluginRuntimePluginScope,
 } from "./gateway-request-scope.js";
 import { createRuntimeLlm } from "./runtime-llm.runtime.js";
 import type { LlmCompleteParams, LlmIsolatedAgentRuntimeCompleteParams } from "./types-core.js";
@@ -490,6 +491,191 @@ describe("operator model policy on plugin completions", () => {
       ),
     ).resolves.toMatchObject({ text: "Allowed answer." });
     expect(mocks.complete).toHaveBeenCalledOnce();
+  });
+
+  it("lets an opted-in plugin use its exact isolated model allowlist", async () => {
+    const pluginCfg: OpenClawConfig = {
+      ...cfg,
+      plugins: {
+        entries: {
+          mailreef: {
+            enabled: true,
+            llm: {
+              allowModelOverride: true,
+              allowedModels: ["test-provider/allowed"],
+              allowedCompletionModels: ["test-provider/allowed"],
+              allowPluginOwnedModelAuthority: true,
+            },
+          },
+        },
+      },
+    };
+    const llm = createRuntimeLlm({
+      getConfig: () => pluginCfg,
+      authority: { allowComplete: true },
+    });
+    const callerAuthority = createAdmittedRunOperatorAuthority({
+      ...operatorSource,
+      modelPolicy: preparePolicy(["test-provider/blocked"]),
+    });
+
+    await expect(
+      withWork(() =>
+        withPluginRuntimePluginScope({ pluginId: "mailreef" }, () =>
+          asOperator(callerAuthority, () =>
+            llm.complete({
+              messages: [{ role: "user", content: "Screen the synthetic message." }],
+              model: "friendly-alias",
+              execution: {
+                mode: "isolated-agent-runtime",
+                modelAuthority: "plugin",
+              },
+            }),
+          ),
+        ),
+      ),
+    ).resolves.toMatchObject({ text: "Allowed answer." });
+    expect(mocks.isolated).toHaveBeenCalledOnce();
+    expect(mocks.isolated.mock.calls[0]?.[0].operatorAuthority).toBeUndefined();
+  });
+
+  it.each([
+    {
+      name: "the plugin opt-in is absent",
+      policy: {
+        allowModelOverride: true,
+        allowedModels: ["test-provider/allowed"],
+        allowedCompletionModels: ["test-provider/allowed"],
+      },
+      message: "not enabled",
+    },
+    {
+      name: "the completion allowlist is wildcarded",
+      policy: {
+        allowModelOverride: true,
+        allowedModels: ["test-provider/allowed"],
+        allowedCompletionModels: ["*"],
+        allowPluginOwnedModelAuthority: true,
+      },
+      message: "exact non-empty",
+    },
+  ])("denies plugin-owned model authority when $name", async ({ policy, message }) => {
+    const pluginCfg: OpenClawConfig = {
+      ...cfg,
+      plugins: { entries: { mailreef: { enabled: true, llm: policy } } },
+    };
+    const llm = createRuntimeLlm({
+      getConfig: () => pluginCfg,
+      authority: { allowComplete: true },
+    });
+
+    await expectDenied(
+      withWork(() =>
+        withPluginRuntimePluginScope({ pluginId: "mailreef" }, () =>
+          asOperator(operator(), () =>
+            llm.complete({
+              messages: [{ role: "user", content: "Screen the synthetic message." }],
+              model: "friendly-alias",
+              execution: {
+                mode: "isolated-agent-runtime",
+                modelAuthority: "plugin",
+              },
+            }),
+          ),
+        ),
+      ),
+      expect.stringContaining(message),
+    );
+    expect(mocks.isolated).not.toHaveBeenCalled();
+  });
+
+  it("denies a model outside the plugin-owned completion allowlist", async () => {
+    mocks.select.mockReturnValue({ ...selection, modelId: "blocked" });
+    const pluginCfg: OpenClawConfig = {
+      ...cfg,
+      plugins: {
+        entries: {
+          mailreef: {
+            enabled: true,
+            llm: {
+              allowModelOverride: true,
+              allowedModels: ["test-provider/allowed"],
+              allowedCompletionModels: ["test-provider/allowed"],
+              allowPluginOwnedModelAuthority: true,
+            },
+          },
+        },
+      },
+    };
+    const llm = createRuntimeLlm({
+      getConfig: () => pluginCfg,
+      authority: { allowComplete: true },
+    });
+
+    await expectDenied(
+      withWork(() =>
+        withPluginRuntimePluginScope({ pluginId: "mailreef" }, () =>
+          asOperator(operator(), () =>
+            llm.complete({
+              messages: [{ role: "user", content: "Screen the synthetic message." }],
+              model: "friendly-alias",
+              execution: {
+                mode: "isolated-agent-runtime",
+                modelAuthority: "plugin",
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+    expect(mocks.isolated).not.toHaveBeenCalled();
+  });
+
+  it("keeps plugin-owned model calls bound to requester liveness", async () => {
+    const started = createDeferredCore();
+    const resume = createDeferredCore();
+    const { authority, retire, release, retain } = requester();
+    const pluginCfg: OpenClawConfig = {
+      ...cfg,
+      plugins: {
+        entries: {
+          mailreef: {
+            enabled: true,
+            llm: {
+              allowModelOverride: true,
+              allowedModels: ["test-provider/allowed"],
+              allowedCompletionModels: ["test-provider/allowed"],
+              allowPluginOwnedModelAuthority: true,
+            },
+          },
+        },
+      },
+    };
+    const llm = createRuntimeLlm({
+      getConfig: () => pluginCfg,
+      authority: { allowComplete: true },
+    });
+    pauseExecution("isolated", async () => {
+      started.resolve();
+      await resume.promise;
+    });
+    const pending = withWork(() =>
+      withPluginRuntimePluginScope({ pluginId: "mailreef" }, () =>
+        asOperator(authority, () =>
+          llm.complete({
+            messages: [{ role: "user", content: "Screen the synthetic message." }],
+            model: "friendly-alias",
+            execution: { mode: "isolated-agent-runtime", modelAuthority: "plugin" },
+          }),
+        ),
+      ),
+    );
+    await waitForWork(started.promise, pending);
+    retire();
+    resume.resolve();
+
+    await expectDenied(pending, "requester retired");
+    expect(release).toHaveBeenCalledTimes(retain.mock.calls.length);
   });
 
   it.each(["direct", "isolated"] as const)(

@@ -86,6 +86,7 @@ it("normalizes every manifest contract family, surface and configured model gran
         allowedModels: ["zulu/model", "alpha/model"],
         allowedCompletionModels: ["zulu/completion", "alpha/completion"],
         allowAuthProfileOverride: false,
+        allowPluginOwnedModelAuthority: true,
         allowAgentIdOverride: true,
       },
       subagent: { allowModelOverride: false, allowedModels: ["zulu/model", "alpha/model"] },
@@ -111,6 +112,7 @@ it("normalizes every manifest contract family, surface and configured model gran
     allowedModels: ["alpha/model", "zulu/model"],
     allowedCompletionModels: ["alpha/completion", "zulu/completion"],
     allowAuthProfileOverride: false,
+    allowPluginOwnedModelAuthority: true,
     allowAgentIdOverride: true,
   });
   expect(summary.grants.subagent).toEqual({

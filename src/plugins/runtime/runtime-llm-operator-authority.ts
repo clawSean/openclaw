@@ -13,9 +13,13 @@ type CompletionOperatorSource = {
   operatorAuthority?: AdmittedRunOperatorAuthority;
   signal?: AbortSignal;
   assertCurrent: () => void;
-  assertModelAllowed: (model: ModelRef | undefined) => void;
+  assertModelAllowed: (
+    model: ModelRef | undefined,
+    options?: { usePluginOwnedModelAuthority?: boolean },
+  ) => void;
   bindModelExecution: (
     model: ModelRef | undefined,
+    options?: { usePluginOwnedModelAuthority?: boolean },
   ) => ReturnType<typeof bindOperatorModelExecution>;
 };
 
@@ -75,12 +79,19 @@ export function bindLlmOperatorAuthority(
       };
       assertCurrent();
       return await complete(params, {
+        // The invocation still owns cancellation and currency. Only model
+        // authorization moves to the plugin's exact host-configured allowlist.
         operatorAuthority,
         signal,
         assertCurrent,
-        assertModelAllowed: (model) =>
-          withOperatorAuthorization(() => assertOperatorModelAllowed(operatorAuthority, model)),
-        bindModelExecution: (model) => {
+        assertModelAllowed: (model, options) =>
+          options?.usePluginOwnedModelAuthority
+            ? undefined
+            : withOperatorAuthorization(() => assertOperatorModelAllowed(operatorAuthority, model)),
+        bindModelExecution: (model, options) => {
+          if (options?.usePluginOwnedModelAuthority) {
+            return undefined;
+          }
           const execution = bindOperatorModelExecution(
             operatorAuthority,
             model,

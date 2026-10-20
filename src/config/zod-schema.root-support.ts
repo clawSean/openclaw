@@ -180,6 +180,8 @@ export const PluginEntrySchema = z.strictObject({
       allowedCompletionModels: z.array(z.string()).optional(),
       /** Allow explicit auth-profile selection for isolated agent-runtime completions. */
       allowAuthProfileOverride: z.boolean().optional(),
+      /** Allow isolated completions to use plugin policy instead of the invoking operator's model policy. */
+      allowPluginOwnedModelAuthority: z.boolean().optional(),
       /** Explicitly allow this plugin to run completions against a non-default agent id. */
       allowAgentIdOverride: z.boolean().optional(),
     })
