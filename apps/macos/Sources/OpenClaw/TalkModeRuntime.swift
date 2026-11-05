@@ -74,6 +74,8 @@ actor TalkModeRuntime {
     var isEnabled = false
     var isPaused = false
     var lifecycleGeneration: Int = 0
+    private var wakeOneShotStartedAt: Date?
+    private let wakeOneShotNoInputTimeout: TimeInterval = 10
 
     private var lastHeard: Date?
     private var noiseFloorRMS: Double = 1e-4
@@ -134,6 +136,7 @@ actor TalkModeRuntime {
     func setEnabled(_ enabled: Bool) async {
         guard enabled != self.isEnabled else { return }
         self.isEnabled = enabled
+        if !enabled { self.wakeOneShotStartedAt = nil }
         self.lifecycleGeneration &+= 1
         resetRealtimeRecoveryState()
         if enabled {
@@ -141,6 +144,14 @@ actor TalkModeRuntime {
         } else {
             await self.stop(lifecycleGeneration: nil)
         }
+    }
+
+    func armWakeOneShot() {
+        self.wakeOneShotStartedAt = Date()
+    }
+
+    func disarmWakeOneShot() {
+        self.wakeOneShotStartedAt = nil
     }
 
     func setPaused(_ paused: Bool) async {
@@ -469,7 +480,16 @@ actor TalkModeRuntime {
         guard !self.isPaused else { return }
         guard self.phase == .listening else { return }
         let transcript = self.lastTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !transcript.isEmpty else { return }
+        guard !transcript.isEmpty else {
+            if let started = self.wakeOneShotStartedAt,
+               self.lastHeard == nil,
+               Date().timeIntervalSince(started) >= self.wakeOneShotNoInputTimeout
+            {
+                self.wakeOneShotStartedAt = nil
+                await MainActor.run { self.state()?.talkEnabled = false }
+            }
+            return
+        }
         guard let lastHeard else { return }
         let elapsed = Date().timeIntervalSince(lastHeard)
         guard elapsed >= self.silenceWindow else { return }
@@ -639,6 +659,11 @@ extension TalkModeRuntime {
     }
 
     private func resumeListeningIfNeeded() async {
+        if self.wakeOneShotStartedAt != nil {
+            self.wakeOneShotStartedAt = nil
+            await MainActor.run { self.state()?.talkEnabled = false }
+            return
+        }
         if self.isPaused {
             self.lastTranscript = ""
             self.lastHeard = nil
@@ -1164,7 +1189,7 @@ extension TalkModeRuntime {
     }
 
     private func beginSpeaking(generation: Int) async -> Bool {
-        if self.config?.interruptOnSpeech ?? true {
+        if self.wakeOneShotStartedAt == nil, self.config?.interruptOnSpeech ?? true {
             guard await self.startRecognition(lifecycleGeneration: generation),
                   self.isCurrent(generation), !self.isPaused else { return false }
         }

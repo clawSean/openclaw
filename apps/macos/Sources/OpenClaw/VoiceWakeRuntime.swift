@@ -676,7 +676,7 @@ actor VoiceWakeRuntime {
             if config.triggerChime != .none {
                 await MainActor.run { VoiceWakeChimePlayer.play(config.triggerChime, reason: "voicewake.trigger") }
             }
-            await self.state()?.setTalkEnabled(true)
+            await self.state()?.startWakeOneShotTalk()
             await self.resumeAfterPushToTalk(lease: lease)
             return
         }

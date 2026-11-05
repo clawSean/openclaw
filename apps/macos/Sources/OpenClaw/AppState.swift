@@ -1035,6 +1035,17 @@ extension AppState {
         await self.voiceEnvironment.publishTalk(self.talkEnabled, phase)
     }
 
+    func startWakeOneShotTalk() async {
+        let oneShot = !self.talkRealtimeRelayEnabled
+        if oneShot {
+            await self.voiceRuntime.talkRuntime.armWakeOneShot()
+        }
+        await self.setTalkEnabled(true)
+        if oneShot && !self.talkEnabled {
+            await self.voiceRuntime.talkRuntime.disarmWakeOneShot()
+        }
+    }
+
     // MARK: - Global wake words sync (Gateway-owned)
 
     func applyGlobalVoiceWakeTriggers(_ triggers: [String]) {
