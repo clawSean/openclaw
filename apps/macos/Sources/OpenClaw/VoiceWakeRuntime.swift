@@ -106,6 +106,7 @@ actor VoiceWakeRuntime {
         let triggerChime: VoiceWakeChime
         let sendChime: VoiceWakeChime
         let triggersTalkMode: Bool
+        let oneShotTalk: Bool
     }
 
     private struct RecognitionUpdate {
@@ -127,7 +128,8 @@ actor VoiceWakeRuntime {
                 localeID: state.voiceWakeLocaleID.isEmpty ? nil : state.voiceWakeLocaleID,
                 triggerChime: state.voiceWakeTriggerChime,
                 sendChime: state.voiceWakeSendChime,
-                triggersTalkMode: state.voiceWakeTriggersTalkMode)
+                triggersTalkMode: state.voiceWakeTriggersTalkMode,
+                oneShotTalk: state.voiceWakeTriggersTalkMode && !state.talkRealtimeRelayEnabled)
             return (enabled, config)
         }
         guard generation == self.refreshGeneration, self.pauseLeases.isEmpty, self.diagnostic == nil else { return }
@@ -307,7 +309,8 @@ actor VoiceWakeRuntime {
                 localeID: localeID,
                 triggerChime: .none,
                 sendChime: .none,
-                triggersTalkMode: false))
+                triggersTalkMode: false,
+                oneShotTalk: false))
         } catch {
             await self.stopDiagnostic(id: id)
             throw error
@@ -664,11 +667,9 @@ actor VoiceWakeRuntime {
         triggerWord: String?,
         config: RuntimeConfig) async
     {
-        // When "Trigger Talk Mode" is enabled, skip the capture/overlay flow entirely
-        // and activate Talk Mode immediately. Talk Mode handles its own STT pipeline.
-        // Pause the wake listener to avoid two audio pipelines competing on the mic
-        // (mirrors the push-to-talk coordination pattern).
-        if config.triggersTalkMode {
+        // Realtime Talk owns its microphone immediately. Native one-shot Talk keeps
+        // this recognizer through the first command so no speech is lost on handoff.
+        if config.triggersTalkMode, !config.oneShotTalk {
             self.logger.info("voicewake trigger -> activating Talk Mode (skipping capture)")
             DiagnosticsFileLog.shared.log(category: "voicewake.runtime", event: "triggerTalkMode")
             let lease = UUID()
@@ -706,7 +707,7 @@ actor VoiceWakeRuntime {
                 source: .wakeWord,
                 text: snapshot,
                 attributed: attributed,
-                forwardEnabled: true,
+                forwardEnabled: !config.oneShotTalk,
                 voiceWakeTrigger: triggerWord)
         }
 
@@ -725,6 +726,14 @@ actor VoiceWakeRuntime {
 
         while self.isCapturing {
             let now = Date()
+            if config.oneShotTalk, self.capturedTranscript.isEmpty {
+                if now.timeIntervalSince(start) >= 10 {
+                    await self.finalizeCapture(config: config)
+                    return
+                }
+                guard await SimpleTaskSupport.waitForNextOperation(interval: 0.2) else { return }
+                continue
+            }
             let silenceThreshold = self.heardBeyondTrigger ? self.silenceWindow : self.triggerOnlySilenceWindow
             let silent = self.lastHeard.map { now.timeIntervalSince($0) >= silenceThreshold } ?? false
             if now >= hardStop || silent {
@@ -763,6 +772,27 @@ actor VoiceWakeRuntime {
         await MainActor.run { self.state()?.earBoostActive = false }
         if let token = self.overlayToken {
             await MainActor.run { self.sessions.updateLevel(token: token, 0) }
+        }
+
+        if config.oneShotTalk {
+            // Hold wake off through the handoff; overlay dismissal also requests a refresh.
+            let token = self.overlayToken
+            let lease = finalTranscript.isEmpty ? nil : UUID()
+            if let lease { self.pauseForPushToTalk(lease: lease) }
+            if let token {
+                await MainActor.run { self.sessions.dismiss(token: token, reason: .explicit, outcome: .empty) }
+            }
+            self.overlayToken = nil
+            guard !finalTranscript.isEmpty else {
+                self.scheduleRestartRecognizer()
+                return
+            }
+            let state = await self.state()
+            Task.detached { [weak self] in
+                await state?.startWakeOneShotTalk(transcript: finalTranscript)
+                if let lease { await self?.resumeAfterPushToTalk(lease: lease) }
+            }
+            return
         }
 
         let sendChime = finalTranscript.isEmpty ? .none : config.sendChime

@@ -154,6 +154,21 @@ actor TalkModeRuntime {
         self.wakeOneShotStartedAt = nil
     }
 
+    func sendWakeOneShotTranscript(_ transcript: String) async {
+        guard self.isEnabled, !self.isPaused, self.wakeOneShotStartedAt != nil else { return }
+        let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        self.stopRecognition()
+        self.lastTranscript = ""
+        self.lastHeard = nil
+        self.phase = .thinking
+        await MainActor.run {
+            self.controller()?.commitTranscript(text)
+            self.controller()?.updatePhase(.thinking)
+        }
+        await self.sendAndSpeak(text)
+    }
+
     func setPaused(_ paused: Bool) async {
         guard paused != self.isPaused else { return }
         self.isPaused = paused

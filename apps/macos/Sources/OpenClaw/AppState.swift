@@ -1035,7 +1035,7 @@ extension AppState {
         await self.voiceEnvironment.publishTalk(self.talkEnabled, phase)
     }
 
-    func startWakeOneShotTalk() async {
+    func startWakeOneShotTalk(transcript: String? = nil) async {
         let oneShot = !self.talkRealtimeRelayEnabled
         if oneShot {
             await self.voiceRuntime.talkRuntime.armWakeOneShot()
@@ -1043,6 +1043,8 @@ extension AppState {
         await self.setTalkEnabled(true)
         if oneShot && !self.talkEnabled {
             await self.voiceRuntime.talkRuntime.disarmWakeOneShot()
+        } else if oneShot, let transcript {
+            await self.voiceRuntime.talkRuntime.sendWakeOneShotTranscript(transcript)
         }
     }
 

@@ -29,7 +29,7 @@ Voice Wake requires Apple Speech to support on-device recognition for the select
 - Debounce between sessions: 350ms (`debounceAfterSend`) after a send.
 - The overlay is driven via `VoiceWakeOverlayController`, with committed/volatile text coloring.
 - After send, a fresh recognition task listens for the next trigger. Talk, Voice Wake, push-to-talk, and Quick Chat dictation reuse their recognizer while the selected language is unchanged; stopping capture still releases the microphone and cancels the task.
-- When wake starts native Talk Mode, the Mac speaks one answer, closes Talk, then resumes wake-word listening. If no question follows the trigger, Talk closes after 10 seconds. Manually started Talk Mode remains continuous. This one-shot behavior does not apply to the optional realtime Gateway relay.
+- When wake starts native one-shot Talk, the wake recognizer keeps the microphone through the first question, then hands the complete transcript to Talk for one spoken answer. This avoids losing speech while swapping recognizers. After playback, Talk closes and Voice Wake resumes. If no question follows the trigger, the wake capture closes after 10 seconds. Manually started Talk Mode remains continuous. This one-shot behavior does not apply to the optional realtime Gateway relay.
 
 ## Lifecycle invariants
 
