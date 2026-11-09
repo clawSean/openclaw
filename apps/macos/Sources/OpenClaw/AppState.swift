@@ -1036,14 +1036,12 @@ extension AppState {
     }
 
     func startWakeOneShotTalk(transcript: String? = nil) async {
-        let oneShot = !self.talkRealtimeRelayEnabled
-        if oneShot {
-            await self.voiceRuntime.talkRuntime.armWakeOneShot()
-        }
+        let nativeOneShot = !self.talkRealtimeRelayEnabled
+        await self.voiceRuntime.talkRuntime.armWakeOneShot()
         await self.setTalkEnabled(true)
-        if oneShot && !self.talkEnabled {
+        if !self.talkEnabled {
             await self.voiceRuntime.talkRuntime.disarmWakeOneShot()
-        } else if oneShot, let transcript {
+        } else if nativeOneShot, let transcript {
             await self.voiceRuntime.talkRuntime.sendWakeOneShotTranscript(transcript)
         }
     }

@@ -75,6 +75,8 @@ actor TalkModeRuntime {
     var isPaused = false
     var lifecycleGeneration: Int = 0
     private var wakeOneShotStartedAt: Date?
+    private var wakeOneShotRealtimeSpoke = false
+    private var wakeOneShotRealtimeHeardInput = false
     private let wakeOneShotNoInputTimeout: TimeInterval = 10
 
     private var lastHeard: Date?
@@ -147,11 +149,55 @@ actor TalkModeRuntime {
     }
 
     func armWakeOneShot() {
-        self.wakeOneShotStartedAt = Date()
+        let startedAt = Date()
+        self.wakeOneShotStartedAt = startedAt
+        self.wakeOneShotRealtimeSpoke = false
+        self.wakeOneShotRealtimeHeardInput = false
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            await self?.expireWakeOneShotIfIdle(startedAt: startedAt)
+        }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(60))
+            await self?.expireWakeOneShotIfStalled(startedAt: startedAt)
+        }
     }
 
     func disarmWakeOneShot() {
         self.wakeOneShotStartedAt = nil
+        self.wakeOneShotRealtimeSpoke = false
+        self.wakeOneShotRealtimeHeardInput = false
+    }
+
+    private func expireWakeOneShotIfIdle(startedAt: Date) async {
+        guard self.wakeOneShotStartedAt == startedAt,
+              !self.wakeOneShotRealtimeSpoke,
+              !self.wakeOneShotRealtimeHeardInput
+        else { return }
+        self.disarmWakeOneShot()
+        await MainActor.run { self.state()?.talkEnabled = false }
+    }
+
+    private func expireWakeOneShotIfStalled(startedAt: Date) async {
+        guard self.wakeOneShotStartedAt == startedAt else { return }
+        self.disarmWakeOneShot()
+        await MainActor.run { self.state()?.talkEnabled = false }
+    }
+
+    func noteWakeOneShotRealtimeInput() {
+        if self.wakeOneShotStartedAt != nil { self.wakeOneShotRealtimeHeardInput = true }
+    }
+
+    func handleWakeOneShotRealtimeSpeakingChanged(_ speaking: Bool) async -> Bool {
+        guard self.wakeOneShotStartedAt != nil else { return false }
+        if speaking {
+            self.wakeOneShotRealtimeSpoke = true
+            return false
+        }
+        guard self.wakeOneShotRealtimeSpoke else { return false }
+        self.disarmWakeOneShot()
+        await MainActor.run { self.state()?.talkEnabled = false }
+        return true
     }
 
     func sendWakeOneShotTranscript(_ transcript: String) async {

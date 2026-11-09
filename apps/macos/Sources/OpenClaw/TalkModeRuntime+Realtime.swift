@@ -481,6 +481,7 @@ extension TalkModeRuntime {
 
     func handleRealtimeSpeakingChanged(_ speaking: Bool, relayGeneration: UInt64) async {
         guard let session = self.activeRealtimeRelay(relayGeneration) else { return }
+        if await self.handleWakeOneShotRealtimeSpeakingChanged(speaking) { return }
         let phase: TalkModePhase = speaking ? .speaking : .listening
         self.phase = phase
         _ = await self.projectRealtimeRelay(relayGeneration, session) {
@@ -490,6 +491,7 @@ extension TalkModeRuntime {
 
     func handleRealtimeInputLevel(_ level: Double, relayGeneration: UInt64) async {
         guard let session = self.activeRealtimeRelay(relayGeneration) else { return }
+        if level > 0.05 { self.noteWakeOneShotRealtimeInput() }
         _ = await self.projectRealtimeRelay(relayGeneration, session) {
             self.controller()?.updateLevel(level)
         }
@@ -510,6 +512,7 @@ extension TalkModeRuntime {
         let text = transcript.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         guard transcript.role == "user" else { return }
+        self.noteWakeOneShotRealtimeInput()
         if transcript.isFinal {
             phase = .thinking
             _ = await self.projectRealtimeRelay(relayGeneration, session) {
