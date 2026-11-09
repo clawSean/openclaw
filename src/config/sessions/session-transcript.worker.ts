@@ -309,6 +309,11 @@ serveOwnedWorkerTasks(
             }
           : { kind: request.kind, ...cold.readSessionColdStorageInventoryInWorker(options) };
       }
+      if (request.kind === "fork-reply-selection") {
+        const { readSessionForkReplySelectionInWorker } =
+          await import("./session-transcript-fork-reply.js");
+        return readSessionForkReplySelectionInWorker(request);
+      }
       if (request.kind === "session-store-target") {
         const { readSessionStoreTargetResult } =
           await import("./session-store-target-inventory.js");

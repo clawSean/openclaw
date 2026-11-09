@@ -272,6 +272,7 @@ type FollowupRuntimeMetadata = Pick<
   FollowupRun,
   | "sourceTurnId"
   | "operatorAuthority"
+  | "assertForkReplaySourceCurrent"
   | "personalBootstrapEligible"
   | "currentInboundEventKind"
   | "currentInboundAudio"
@@ -401,6 +402,13 @@ export function collectRuntimeMetadata(
     ...(items.length > 0 && items.every((item) => item.personalBootstrapEligible === true)
       ? { personalBootstrapEligible: true }
       : {}),
+    assertForkReplaySourceCurrent: items.some((item) => item.assertForkReplaySourceCurrent)
+      ? () => {
+          for (const item of items) {
+            item.assertForkReplaySourceCurrent?.();
+          }
+        }
+      : undefined,
     currentInboundEventKind: currentTurnSource?.currentInboundEventKind,
     currentInboundAudio: currentTurnSource?.currentInboundAudio,
     currentInboundContext: collectCurrentInboundContext(items),
@@ -471,6 +479,7 @@ export function createOverflowSummaryRetrySource(source: FollowupRun): FollowupR
     sourceTurnId: source.sourceTurnId,
     admissionSessionId: source.admissionSessionId,
     operatorAuthority: source.operatorAuthority,
+    assertForkReplaySourceCurrent: source.assertForkReplaySourceCurrent,
     personalBootstrapEligible: source.personalBootstrapEligible,
     queueAbortSignal: source.queueAbortSignal,
     transcriptPrompt: source.transcriptPrompt,

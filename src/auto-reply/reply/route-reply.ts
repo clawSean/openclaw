@@ -73,6 +73,8 @@ type RouteReplyParams = {
   cfg: OpenClawConfig;
   abortSignal?: AbortSignal;
   /** Mirror reply into session transcript (default: true when sessionKey is set). */
+  /** Internal live authority fence at the final synchronous adapter handoff. */
+  assertDirectAdapterHandoff?: () => void;
   mirror?: boolean;
   isGroup?: boolean;
   /** Group or channel identifier for correlation with received events */
@@ -328,7 +330,14 @@ async function routeReplyOperation(
       session: outboundSession,
       signal: abortSignal,
       onPlatformSendDispatch: params.beforeDeliver,
-      assertDirectAdapterHandoff: params.assertCurrent,
+      ...(params.assertCurrent || params.assertDirectAdapterHandoff
+        ? {
+            assertDirectAdapterHandoff: () => {
+              params.assertCurrent?.();
+              params.assertDirectAdapterHandoff?.();
+            },
+          }
+        : {}),
       ...(params.assertCurrent ? { deliveryRetryOwner: "caller" as const } : {}),
       ...(params.deliveryIntentId
         ? {

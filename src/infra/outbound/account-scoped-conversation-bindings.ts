@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveThreadBindingConversationIdFromBindingId } from "../../channels/thread-binding-id.js";
@@ -259,13 +260,23 @@ function prepareAccountBindingManager<TKind extends string>(
       idleExpiresAt != null && maxAgeExpiresAt != null
         ? Math.min(idleExpiresAt, maxAgeExpiresAt)
         : (idleExpiresAt ?? maxAgeExpiresAt);
+    const cap = metadata?.["__sessionBindingAbsoluteExpiresAt"];
+    const absoluteExpiresAt = typeof cap === "number" && Number.isFinite(cap) ? cap : undefined;
     return projectThreadBindingRecord(record, {
+      generation: normalizeOptionalString(metadata?.["__threadBindingGeneration"]),
       conversation: {
         channel: params.channel,
         conversationId: record.conversationId,
       },
       targetKind: params.toSessionBindingTargetKind(record.targetKind),
-      lifecycle: { expiresAt, idleTimeoutMs, maxAgeMs },
+      lifecycle: {
+        expiresAt:
+          absoluteExpiresAt === undefined
+            ? expiresAt
+            : Math.min(expiresAt ?? Infinity, absoluteExpiresAt),
+        idleTimeoutMs,
+        maxAgeMs,
+      },
       metadata: (lifecycleMetadata) => ({ ...metadata, ...lifecycleMetadata }),
     });
   };
@@ -291,7 +302,9 @@ function prepareAccountBindingManager<TKind extends string>(
     };
   };
   const prepareBind = (
-    input: Parameters<AccountScopedConversationBindingManager<TKind>["bindConversation"]>[0],
+    input: Parameters<AccountScopedConversationBindingManager<TKind>["bindConversation"]>[0] & {
+      expiresAt?: number;
+    },
   ): (CurrentConversationBindingBind & { assertAgentResolved?: () => void }) | null => {
     const conversationId = input.conversationId.trim();
     const targetSessionKey = input.targetSessionKey.trim();
@@ -299,6 +312,13 @@ function prepareAccountBindingManager<TKind extends string>(
       return null;
     }
     const now = Date.now();
+    const metadata = {
+      ...input.metadata,
+      ...(input.expiresAt === undefined
+        ? {}
+        : { __sessionBindingAbsoluteExpiresAt: input.expiresAt }),
+      __threadBindingGeneration: randomUUID(),
+    };
     let inferredAgentId: string | undefined;
     let assertAgentResolved: (() => void) | undefined;
     try {
@@ -323,7 +343,7 @@ function prepareAccountBindingManager<TKind extends string>(
           boundAt: now,
           lastActivityAt: now,
         },
-        input.metadata,
+        metadata,
       ),
       accountPolicy: { inferredAgentId },
     };
@@ -558,6 +578,7 @@ function createAccountBindingManager<TKind extends string>(
         targetKind: input.targetKind,
         targetSessionKey: input.targetSessionKey,
         metadata: input.metadata,
+        expiresAt: input.expiresAt,
       });
       return prepared
         ? bindCurrentConversationRecordAsync(
@@ -581,7 +602,10 @@ function createAccountBindingManager<TKind extends string>(
             scope: accountScope,
             genericOnly: false,
           },
-          assertCurrent,
+          () => {
+            assertCurrent();
+            input.assertCurrent?.();
+          },
         );
       }
       const conversationId = conversationIdFromBinding(input.bindingId);
@@ -591,7 +615,10 @@ function createAccountBindingManager<TKind extends string>(
               conversation: conversationRef(conversationId),
               expected: input[expectedCurrentSessionBinding],
             },
-            assertCurrent,
+            () => {
+              assertCurrent();
+              input.assertCurrent?.();
+            },
           )
         : [];
     },

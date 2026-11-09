@@ -683,7 +683,6 @@ async function runSyntheticOverflowSummary(params: {
     beforeMessageWrite: runAgentHarnessBeforeMessageWriteHook,
     errorContext: "followup overflow summary transcript",
   });
-  const currentInboundEventKind = resolveOverflowSummaryInboundEventKind(params.sources);
   const runtimeMetadata = collectRuntimeMetadata(params.sources);
   let admitted = false;
   await params.runFollowup({
@@ -701,6 +700,8 @@ async function runSyntheticOverflowSummary(params: {
     channelAdmissionEvidence: runtimeMetadata.channelAdmissionEvidence,
     gatewayLocalUserIngress: runtimeMetadata.gatewayLocalUserIngress,
     operatorAuthority: runtimeMetadata.operatorAuthority,
+    assertForkReplaySourceCurrent: runtimeMetadata.assertForkReplaySourceCurrent,
+    currentInboundEventKind: resolveOverflowSummaryInboundEventKind(params.sources),
     personalBootstrapEligible: runtimeMetadata.personalBootstrapEligible,
     toolsAllow: runtimeMetadata.toolsAllow,
     disableTools: runtimeMetadata.disableTools,
@@ -724,7 +725,6 @@ async function runSyntheticOverflowSummary(params: {
         }
       : {}),
     ...resolveOriginRoutingMetadata([params.source]),
-    ...(currentInboundEventKind ? { currentInboundEventKind } : {}),
   });
 }
 

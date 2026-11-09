@@ -39,6 +39,7 @@ export function createThreadBindingSessionAdapter(params: {
     const bindingId = resolveBindingRecordKey(record) ?? `${record.accountId}:${record.threadId}`;
     const lifecycle = resolvePreparedThreadBindingLifecycle({ record, ...defaults });
     return projectThreadBindingRecord(record, {
+      generation: normalizeOptionalString(record.metadata?.["__threadBindingGeneration"]),
       conversation: {
         channel: "discord",
         conversationId: record.threadId,
@@ -105,6 +106,7 @@ export function createThreadBindingSessionAdapter(params: {
         boundBy: normalizeOptionalString(metadata.boundBy),
         introText: normalizeOptionalString(metadata.introText),
         metadata,
+        ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
         ...(assertCurrent ? { assertCurrent } : {}),
       });
       return bound ? serializeBinding(bound) : null;
@@ -136,7 +138,8 @@ export function createThreadBindingSessionAdapter(params: {
       params.manager.touchThreadSync({ threadId, at, persist: true }),
     touchConversationAsync: (threadId, at) =>
       params.manager.touchThread({ threadId, at, persist: true }),
-    unbindConversation: (threadId, reason) => params.manager.unbindThread({ threadId, reason }),
+    unbindConversation: (threadId, reason, assertCurrent) =>
+      params.manager.unbindThread({ threadId, reason, assertCurrent }),
     unbindBySessionKey: (targetSessionKey, reason) =>
       params.manager.unbindBySessionKey({ targetSessionKey, reason }),
   });

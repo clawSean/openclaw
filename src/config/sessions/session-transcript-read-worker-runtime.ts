@@ -11,6 +11,7 @@ import {
   listSqliteTargetCandidatePathsForSessionStorePath,
   resolveUnsuffixedSqliteTargetFromSessionStorePath,
 } from "./session-sqlite-target-paths.js";
+import type { SessionForkReplySelectionWorkerInput } from "./session-transcript-fork-reply.js";
 import { resolveSessionTranscriptReadFence } from "./session-transcript-read-fence.js";
 import { createSessionTranscriptReadPool } from "./session-transcript-read-pools.js";
 import type {
@@ -33,6 +34,28 @@ const modelContextReads = createSessionTranscriptReadPool<
 const sessionEntries = createSessionTranscriptReadPool<
   SessionEntryWorkerInput | SessionEntriesWorkerInput | SessionResetRecallWorkerInput
 >(resolveWorkerPoolSize("singleton"), true);
+
+const forkReplySelections = createSessionTranscriptReadPool<SessionForkReplySelectionWorkerInput>(
+  resolveWorkerPoolSize("singleton"),
+  true,
+);
+
+export async function readSessionForkReplySelectionInWorker(
+  input: Omit<SessionForkReplySelectionWorkerInput, "kind">,
+) {
+  return unwrapSessionTranscriptWorkerReply<"fork-reply-selection">(
+    await forkReplySelections.run(
+      { kind: "fork-reply-selection", ...input },
+      { inputBytes: JSON.stringify(input).length * 2, timeoutMs: 60_000 },
+      {
+        storePaths: [input.target.storePath],
+        admissionPaths: [
+          resolveUnsuffixedSqliteTargetFromSessionStorePath(input.target.storePath).path,
+        ],
+      },
+    ),
+  );
+}
 
 export async function readSessionTranscriptModelContextInWorker(
   target: SessionTranscriptRuntimeTarget,

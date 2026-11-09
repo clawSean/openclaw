@@ -116,6 +116,38 @@ export function withRecentSessionTranscriptActiveEventsInSnapshot<T>(
   }
 }
 
+/** Finds the newest matching context-eligible event without truncating the active path. */
+export function findSessionTranscriptActiveEventInSnapshot<T>(
+  projection: CurrentTranscriptProjection,
+  select: (event: TranscriptEvent) => T | undefined,
+): T | undefined {
+  const query = getActiveTranscriptKysely(projection.database)
+    .selectFrom("session_transcript_active_events as active")
+    .innerJoin("transcript_events as event", (join) =>
+      join
+        .onRef("event.session_id", "=", "active.session_id")
+        .onRef("event.seq", "=", "active.event_seq"),
+    )
+    .select(transcriptEventJsonSql(projection.database.db, "event").as("event_json"))
+    .where("active.session_id", "=", projection.resolved.sessionId)
+    .where("active.context_eligible", "=", 1)
+    .orderBy("active.active_position", "desc");
+  for (const row of iterateSqliteQuerySync(projection.database.db, query)) {
+    let event: TranscriptEvent;
+    try {
+      // SAFETY: Transcript writers persist TranscriptEvent objects; parse failures are explicit.
+      event = JSON.parse(row.event_json) as TranscriptEvent;
+    } catch (error) {
+      throw toErrorObject(error, "Transcript event JSON parsing failed");
+    }
+    const selected = select(event);
+    if (selected !== undefined) {
+      return selected;
+    }
+  }
+  return undefined;
+}
+
 export function readSessionTranscriptBoundedMessageTailPageFromProjection(
   projection: CurrentTranscriptProjection,
   options: SessionTranscriptBoundedMessageTailOptions,

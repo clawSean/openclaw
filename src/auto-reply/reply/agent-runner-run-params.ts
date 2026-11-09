@@ -199,6 +199,7 @@ export function buildFallbackCandidateTurnParams(params: AgentFallbackCandidateC
     onContextEngineTurnCandidate: params.onContextEngineTurnCandidate,
     currentInboundEventKind: turn.followupRun.currentInboundEventKind,
     currentInboundContext: turn.followupRun.currentInboundContext,
+    assertForkReplaySourceCurrent: turn.followupRun.assertForkReplaySourceCurrent,
     extraSystemPrompt: turn.followupRun.run.extraSystemPrompt,
     extraSystemPromptTurnContext: turn.followupRun.run.extraSystemPromptTurnContext,
     sourceReplyDeliveryMode: turn.followupRun.run.sourceReplyDeliveryMode,

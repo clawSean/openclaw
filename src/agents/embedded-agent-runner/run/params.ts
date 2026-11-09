@@ -59,6 +59,8 @@ export type RunEmbeddedAgentParams = {
   scheduledAutomation?: import("../../../auto-reply/reply/session-event-contract.js").ScheduledSessionAutomation;
   /** Settles the session's initial workspace attribution before tools can act. */
   awaitSessionDiffBaseline?: () => Promise<void>;
+  /** Host-only fork replay authority, rechecked at each physical provider call. */
+  assertForkReplaySourceCurrent?: () => void;
   /** Host-minted parent audience inherited by a trusted internal child run. */
   memoryAudience?: import("../../../plugins/memory-provider-types.js").MemoryAudience;
   /** Detached runs may read session identity but never write its durable transcript or metadata. */

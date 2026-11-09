@@ -16,11 +16,13 @@ import {
   bindGatewayContextResolver,
   getPluginRuntimeGatewayRequestScope,
 } from "../../plugins/runtime/gateway-request-scope.js";
-import { captureCommandOwnerAssertion } from "../command-owner-authority.js";
 import type { AgentTurnParams } from "./agent-runner-execution.types.js";
 import { resolveReplyScheduledToolPolicy } from "./agent-runner-run-params.js";
 import { resolveQueuedReplyRuntimeConfig } from "./agent-runner-utils.js";
-import { prepareChannelRunAdmission } from "./channel-run-admission.js";
+import {
+  prepareChannelRunAdmission,
+  resolveAgentRunSourceAssertion,
+} from "./channel-run-admission.js";
 import { resolveFollowupAbortSignal } from "./queue/types.js";
 
 /** Owns reply admission and closes its delivery grant after deferred and terminal writes settle. */
@@ -38,9 +40,7 @@ export function prepareReplyTurnExecution(params: AgentTurnParams, runId: string
       sessionKey,
       storePath: params.storePath,
     }),
-    params.followupRun.run.senderIsOwner === true
-      ? captureCommandOwnerAssertion(params.followupRun.run)
-      : undefined,
+    resolveAgentRunSourceAssertion(params.followupRun),
     params.followupRun.run.internalEventExecution?.assertCurrent,
     automation?.assertCurrent,
   ]);

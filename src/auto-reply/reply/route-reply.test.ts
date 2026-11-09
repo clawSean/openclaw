@@ -183,6 +183,37 @@ describe("routeReply", () => {
     setActivePluginRegistry(createTestRegistry());
   });
 
+  it("composes existing delivery authority with the live replay guard at adapter handoff", async () => {
+    let authorized = true;
+    const beforeDeliver = vi.fn(async () => undefined);
+    const assertCurrent = vi.fn();
+    const assertReplayCurrent = vi.fn(() => {
+      if (!authorized) {
+        throw new Error("owner revoked");
+      }
+    });
+    await routeTestReply({
+      payload: { text: "fork replay" },
+      channel: "telegram",
+      to: "chat:fork",
+      beforeDeliver,
+      assertCurrent,
+      assertDirectAdapterHandoff: assertReplayCurrent,
+    });
+    const delivery = lastDelivery();
+    const handoff = delivery.assertDirectAdapterHandoff;
+    expect(delivery.onPlatformSendDispatch).toBe(beforeDeliver);
+    expect(delivery.deliveryRetryOwner).toBe("caller");
+    expect(typeof handoff).toBe("function");
+    (handoff as () => void)();
+    expect(assertCurrent).toHaveBeenCalledOnce();
+    expect(assertReplayCurrent).toHaveBeenCalledOnce();
+    authorized = false;
+    expect(() => (handoff as () => void)()).toThrow("owner revoked");
+    expect(assertCurrent).toHaveBeenCalledTimes(2);
+    expect(assertReplayCurrent).toHaveBeenCalledTimes(2);
+  });
+
   it.each([
     { channel: "slack", aborted: true, error: "Reply routing aborted" },
     {

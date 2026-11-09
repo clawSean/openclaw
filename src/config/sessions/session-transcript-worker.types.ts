@@ -121,6 +121,7 @@ import type {
   SessionStoreTargetReadResult,
 } from "./session-store-target-inventory.js";
 import type { SessionTranscriptAnchorFacts } from "./session-transcript-anchor-read.types.js";
+import type { SessionForkReplySelectionWorkerInput } from "./session-transcript-fork-reply.js";
 import type {
   SessionTranscriptHydrationWorkerInput,
   SessionTranscriptCurrentTurnEntryWorkerInput,
@@ -341,6 +342,7 @@ export type SessionHistoryWorkerInput =
 
 export type SessionTranscriptWorkerInput =
   | SessionSqliteTargetWorkerInput
+  | SessionForkReplySelectionWorkerInput
   | SessionHistoryWorkerInput
   | SessionModelContextWorkerInput
   | SessionContextMessagesWorkerInput
@@ -495,6 +497,7 @@ export type SessionTranscriptWorkerValues = SessionTranscriptInventoryWorkerValu
           >;
         };
     "session-entries": SessionEntriesWorkerResult;
+    "fork-reply-selection": import("./session-transcript-fork-reply.js").SessionForkReplySelection;
   };
 
 export type SessionTranscriptWorkerError =

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   formatThreadBindingDurationLabel,
   resolveThreadBindingEffectiveExpiresAt,
@@ -19,6 +20,7 @@ export function toSessionBindingRecord(
   const lifecycleDuration = (field: "idleTimeoutMs" | "maxAgeMs") =>
     typeof record[field] === "number" ? Math.max(0, Math.floor(record[field])) : defaults[field];
   return projectThreadBindingRecord(record, {
+    generation: normalizeOptionalString(record.metadata?.["__threadBindingGeneration"]),
     conversation: {
       channel: "telegram",
       conversationId: record.conversationId,
@@ -45,6 +47,7 @@ export function fromSessionBindingInput(params: {
     targetKind: BindingTargetKind;
     conversationId: string;
     metadata?: Record<string, unknown>;
+    expiresAt?: number;
   };
 }): TelegramThreadBindingRecord {
   const now = Date.now();
@@ -71,8 +74,18 @@ export function fromSessionBindingInput(params: {
     metadata: {
       ...previous?.metadata,
       ...metadata,
+      __threadBindingGeneration: randomUUID(),
     },
+    ...(previous?.expiresAt !== undefined ? { expiresAt: previous.expiresAt } : {}),
   };
+
+  if (params.input.expiresAt !== undefined) {
+    const expiresAt = Math.floor(params.input.expiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+      throw new Error("Thread binding expiry must be in the future");
+    }
+    record.expiresAt = expiresAt;
+  }
 
   for (const key of ["idleTimeoutMs", "maxAgeMs"] as const) {
     const value = metadata[key];

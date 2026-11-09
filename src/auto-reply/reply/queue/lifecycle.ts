@@ -11,7 +11,7 @@ const deferredHeartbeatStops = new WeakMap<TurnAdoptionLifecycle, () => void>();
 
 type FollowupLifecycleRun = Pick<
   FollowupRun,
-  "steerPending" | "turnAdoptionLifecycle" | "operatorAuthority"
+  "steerPending" | "turnAdoptionLifecycle" | "operatorAuthority" | "assertForkReplaySourceCurrent"
 >;
 
 function stopFollowupRunPreAdoptionHeartbeat(lifecycle: TurnAdoptionLifecycle | undefined): void {
@@ -84,6 +84,7 @@ export function markFollowupRunEnqueued(run: FollowupLifecycleRun): boolean {
   const authority = run.operatorAuthority;
   authority?.signal?.throwIfAborted();
   authority?.assertCurrent();
+  run.assertForkReplaySourceCurrent?.();
   // Delivery recovery has a fresh queue lifetime after its parent turn settles.
   const lifecycle =
     run.turnAdoptionLifecycle ??
@@ -129,6 +130,7 @@ export function retireFollowupRunCancellation(run: FollowupLifecycleRun): void {
 
 export async function admitFollowupRunLifecycle(run: FollowupLifecycleRun): Promise<void> {
   run.operatorAuthority?.assertCurrent();
+  run.assertForkReplaySourceCurrent?.();
   const lifecycle = run.turnAdoptionLifecycle;
   if (!lifecycle || admittedTurnAdoptionLifecycles.has(lifecycle)) {
     return;
@@ -146,6 +148,7 @@ export async function admitFollowupRunLifecycle(run: FollowupLifecycleRun): Prom
     if (!admittedTurnAdoptionLifecycles.has(lifecycle)) {
       await lifecycle.onAdopted();
       run.operatorAuthority?.assertCurrent();
+      run.assertForkReplaySourceCurrent?.();
       admittedTurnAdoptionLifecycles.add(lifecycle);
       stopFollowupRunPreAdoptionHeartbeat(lifecycle);
     }

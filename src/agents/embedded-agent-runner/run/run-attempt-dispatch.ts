@@ -401,6 +401,7 @@ export async function prepareAndDispatchEmbeddedRunAttempt(
     continuation: sessionPromptState.continuation,
     permissionChange: input.permissionChange,
     admittedRunContext: params.admittedRunContext,
+    assertForkReplaySourceCurrent: params.assertForkReplaySourceCurrent,
     startedAtMs: runInput.startedAtMs,
     contextEngineAgentId: runInput.contextEngineAgentId,
     ...(runtime.pluginHarnessOwnsTransport ? { sandbox: pluginSandbox } : {}),

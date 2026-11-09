@@ -483,8 +483,24 @@ export function buildBuiltinChatCommands(
     }),
     defineBuiltinCommand("name", "Name or rename the current session.", "session", "standard", {
       modelIndependent: "always",
-      ...freeformArgs("title", "New session name (omit to see a suggestion)"),
+      args: [
+        defineCommandArgument("title", "New session name (omit to see a suggestion)", {
+          captureRemaining: true,
+        }),
+      ],
     }),
+    defineBuiltinCommand(
+      "fork",
+      "Fork this conversation (or /fork --back to return).",
+      "session",
+      "essential",
+      {
+        acceptsArgs: true,
+        activeRunSafe: true,
+        modelIndependent: "always",
+        textAliases: ["/fork", "/split"],
+      },
+    ),
     defineBuiltinCommand(
       "compact",
       "Compact the session context.",
