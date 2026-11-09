@@ -44,6 +44,9 @@ function makeRuntime() {
   const initiateCall = vi.fn(async () => ({ callId: "new-call", success: true }));
   const sendDtmf = vi.fn(async () => ({ success: true }));
   const endCall = vi.fn(async () => ({ success: true }));
+  const getCallFromMemoryOrStore = vi.fn(async (callId: string) =>
+    callId === call.callId ? call : undefined,
+  );
   const getCallForStream = vi.fn(async (callId: string) =>
     callId === call.callId ? call : undefined,
   );
@@ -55,13 +58,22 @@ function makeRuntime() {
       sendDtmf,
       endCall,
       getCallForStream,
+      getCallFromMemoryOrStore,
     } as unknown as VoiceCallRuntime["manager"],
     webhookServer: {} as VoiceCallRuntime["webhookServer"],
     webhookUrl: "http://127.0.0.1:3334/voice/webhook",
     publicUrl: null,
     stop: vi.fn(async () => {}),
   } as VoiceCallRuntime;
-  return { call, runtime, initiateCall, sendDtmf, endCall, getCallForStream };
+  return {
+    call,
+    runtime,
+    initiateCall,
+    sendDtmf,
+    endCall,
+    getCallForStream,
+    getCallFromMemoryOrStore,
+  };
 }
 
 async function makeManagerRuntime() {
@@ -199,6 +211,47 @@ describe("voice-call active-call tool scope", () => {
     expect(carrier.hangupCall).not.toHaveBeenCalled();
   });
 
+  it("reads status only for the exact bound active call", async () => {
+    const { tool } = registerBoundTool();
+
+    const implicit = await tool.execute("status-implicit", { action: "get_status" });
+    const explicit = await tool.execute("status-explicit", {
+      action: "get_status",
+      callId: runtimeStub.call.callId,
+    });
+
+    for (const result of [implicit, explicit]) {
+      expect(JSON.stringify(result)).not.toContain("error");
+      expect(JSON.stringify(result)).toContain(runtimeStub.call.callId);
+      expect(JSON.stringify(result)).toContain("outbound");
+      expect(JSON.stringify(result)).toContain("active");
+    }
+    expect(runtimeStub.getCallFromMemoryOrStore).toHaveBeenCalledTimes(2);
+    expect(runtimeStub.getCallFromMemoryOrStore).toHaveBeenNthCalledWith(
+      1,
+      runtimeStub.call.callId,
+    );
+    expect(runtimeStub.getCallFromMemoryOrStore).toHaveBeenNthCalledWith(
+      2,
+      runtimeStub.call.callId,
+    );
+    expect(runtimeStub.endCall).not.toHaveBeenCalled();
+    expect(runtimeStub.initiateCall).not.toHaveBeenCalled();
+    expect(runtimeStub.sendDtmf).not.toHaveBeenCalled();
+  });
+
+  it("rejects status for a foreign call id before reading call history", async () => {
+    const { tool } = registerBoundTool();
+
+    const result = await tool.execute("status-foreign", {
+      action: "get_status",
+      callId: "call-foreign",
+    });
+
+    expect(JSON.stringify(result)).toContain("bound to call");
+    expect(runtimeStub.getCallFromMemoryOrStore).not.toHaveBeenCalled();
+  });
+
   it.each([{ action: "steer_call", callId: "bound", message: "steer" }])(
     "rejects a non-end_call action on a bound call ($action)",
     async (params) => {
@@ -210,7 +263,7 @@ describe("voice-call active-call tool scope", () => {
 
       const result = await tool.execute("rejected", scopedParams);
 
-      expect(JSON.stringify(result)).toContain("only end_call");
+      expect(JSON.stringify(result)).toContain("only get_status or end_call");
       expect(runtimeStub.endCall).not.toHaveBeenCalled();
       expect(runtimeStub.initiateCall).not.toHaveBeenCalled();
       expect(runtimeStub.sendDtmf).not.toHaveBeenCalled();

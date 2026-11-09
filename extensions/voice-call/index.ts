@@ -512,11 +512,11 @@ export default definePluginEntry({
                     ),
                   );
                 case "get_status": {
-                  const callId = normalizeOptionalString(rawParams.callId);
+                  const callId = callScope?.callId ?? normalizeOptionalString(rawParams.callId);
                   if (!callId) {
                     throw new VoiceCallCommandInputError("callId required");
                   }
-                  return json(await commands.status(callId));
+                  return json(await commands.status(callId, callScope?.execution));
                 }
               }
             }

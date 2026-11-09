@@ -24,8 +24,8 @@ export async function resolveActiveVoiceCallToolScope(params: {
   if (binding.kind !== "active-call" || !callId) {
     return undefined;
   }
-  if (params.action !== "end_call") {
-    throw new VoiceCallCommandInputError("This realtime consult may only end_call.");
+  if (params.action !== "end_call" && params.action !== "get_status") {
+    throw new VoiceCallCommandInputError("This realtime consult may only get_status or end_call.");
   }
   const requestedCallId = normalizeOptionalString(params.requestedCallId);
   if (requestedCallId && requestedCallId !== callId) {
@@ -38,6 +38,10 @@ export async function resolveActiveVoiceCallToolScope(params: {
   const activeCall = await params.runtime.manager.getCallForStream(callId);
   if (!activeCall || activeCall.callId !== callId) {
     throw new VoiceCallCommandInputError("The bound realtime call is no longer active.");
+  }
+  if (params.action === "get_status") {
+    params.signal?.throwIfAborted();
+    params.assertAuthority();
   }
   return {
     callId,

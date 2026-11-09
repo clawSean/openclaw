@@ -206,12 +206,17 @@ export function createVoiceCallCommandService(ensureRuntime: () => Promise<Voice
       return { success: true };
     },
 
-    async status(callId?: string) {
-      const rt = await ensureRuntime();
+    async status(
+      callId?: string,
+      execution?: { runtime?: VoiceCallRuntime; assertAuthority?: () => void },
+    ) {
+      const rt = execution?.runtime ?? (await ensureRuntime());
+      execution?.assertAuthority?.();
       if (!callId) {
         return { found: true, calls: rt.manager.getActiveCalls().map(toVoiceCallStatus) };
       }
       const call = await rt.manager.getCallFromMemoryOrStore(callId);
+      execution?.assertAuthority?.();
       return call ? { found: true, call: toVoiceCallStatus(call) } : { found: false };
     },
   };

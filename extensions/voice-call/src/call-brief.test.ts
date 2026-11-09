@@ -154,6 +154,29 @@ describe("per-call brief", () => {
     expect(buildCallBriefInstructions(call())).toBe("");
   });
 
+  it("identifies an outbound call's direction, origin, requester, task, and success criteria", () => {
+    const instructions = buildCallBriefInstructions(
+      call({
+        requesterSessionKey: "agent:main:telegram:group:example",
+        brief: {
+          task: "Explain why this call was placed",
+          successCriteria: "The callee understands the reason for the call",
+        },
+      }),
+    );
+
+    expect(instructions).toContain("Call direction: outbound");
+    expect(instructions).toContain("OpenClaw initiated this call");
+    expect(instructions).toContain("you are the calling voice agent");
+    expect(instructions).toContain("Never claim that you did not place or initiate this call");
+    expect(instructions).toContain("Requester: the OpenClaw owner/session");
+    expect(instructions).toContain("Task: Explain why this call was placed");
+    expect(instructions).toContain(
+      "Success criteria: The callee understands the reason for the call",
+    );
+    expect(instructions).not.toContain("agent:main:telegram:group:example");
+  });
+
   it("defaults to limited disclosure and no financial commitments", () => {
     const instructions = buildCallBriefInstructions(call({ brief: { task: "Ask about stock" } }));
     expect(instructions).toContain("Do not share personal details");
