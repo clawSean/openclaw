@@ -9,6 +9,7 @@ type TelegramBindingTargetKind = "subagent" | "acp";
 
 export type TelegramThreadBindingRecord =
   AccountScopedConversationBindingRecord<TelegramBindingTargetKind> & {
+    generation?: string;
     idleTimeoutMs?: number;
     maxAgeMs?: number;
     expiresAt?: number;
@@ -102,6 +103,17 @@ export function sanitizeStoredBinding(
     boundAt,
     lastActivityAt,
   };
+  const rawMetadata =
+    entry?.metadata && typeof entry.metadata === "object" ? { ...entry.metadata } : undefined;
+  const generation =
+    normalizeOptionalString(entry?.generation) ??
+    normalizeOptionalString(rawMetadata?.["__threadBindingGeneration"]);
+  if (generation) {
+    record.generation = generation;
+  }
+  if (rawMetadata) {
+    delete rawMetadata["__threadBindingGeneration"];
+  }
   if (typeof entry?.idleTimeoutMs === "number" && Number.isFinite(entry.idleTimeoutMs)) {
     record.idleTimeoutMs = Math.max(0, Math.floor(entry.idleTimeoutMs));
   }
@@ -117,9 +129,7 @@ export function sanitizeStoredBinding(
       record[field] = value.trim();
     }
   }
-  const metadata = normalizeMetadataForStore(
-    entry?.metadata && typeof entry.metadata === "object" ? { ...entry.metadata } : undefined,
-  );
+  const metadata = normalizeMetadataForStore(rawMetadata);
   if (metadata) {
     record.metadata = metadata;
   }

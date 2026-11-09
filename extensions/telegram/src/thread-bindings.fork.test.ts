@@ -182,10 +182,8 @@ describe("telegram native fork bindings", () => {
     const second = await getSessionBindingService().bind(input);
     expect(first.bindingId).toBe(second.bindingId);
     expect(first.boundAt).toBe(second.boundAt);
-    expect(typeof first.metadata?.["__threadBindingGeneration"]).toBe("string");
-    expect(second.metadata?.["__threadBindingGeneration"]).not.toBe(
-      first.metadata?.["__threadBindingGeneration"],
-    );
+    expect(typeof first.generation).toBe("string");
+    expect(second.generation).not.toBe(first.generation);
   });
 
   it("keeps a restored route's absolute deadline through activity refresh", async () => {
@@ -239,6 +237,7 @@ describe("telegram native fork bindings", () => {
       conversation: prior.conversation,
       boundAt: prior.boundAt,
       expiresAt: prior.expiresAt,
+      generation: prior.generation,
       metadata: prior.metadata,
     };
     const fork = "agent:main:fork-restarted";
@@ -267,7 +266,7 @@ describe("telegram native fork bindings", () => {
       previous: {
         bindingId: prior.bindingId,
         targetSessionKey: prior.targetSessionKey,
-        metadata: { __threadBindingGeneration: prior.metadata?.["__threadBindingGeneration"] },
+        generation: prior.generation,
       },
     });
 
@@ -282,7 +281,7 @@ describe("telegram native fork bindings", () => {
           previous: {
             bindingId: prior.bindingId,
             targetSessionKey: prior.targetSessionKey,
-            metadata: { __threadBindingGeneration: prior.metadata?.["__threadBindingGeneration"] },
+            generation: prior.generation,
           },
         },
       },
@@ -296,8 +295,6 @@ describe("telegram native fork bindings", () => {
     });
     expect(restored.targetSessionKey).toBe("agent:main:source");
     expect(restored.metadata?.conversationFork).toBeUndefined();
-    expect(restored.metadata?.["__threadBindingGeneration"]).not.toBe(
-      previous.metadata?.["__threadBindingGeneration"],
-    );
+    expect(restored.generation).not.toBe(previous.generation);
   });
 });

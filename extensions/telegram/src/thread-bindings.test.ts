@@ -12,9 +12,10 @@ vi.mock("./send-runtime.js", () => ({
   loadTelegramSendModule: async () => ({ createForumTopicTelegram: createForumTopicMock }),
 }));
 
-import type {
-  TelegramThreadBindingManager,
-  TelegramThreadBindingRecord,
+import {
+  resolveStoredBindingKey,
+  type TelegramThreadBindingManager,
+  type TelegramThreadBindingRecord,
 } from "./thread-bindings-store.js";
 import {
   TELEGRAM_THREAD_BINDINGS_TEST_CFG,
@@ -416,19 +417,9 @@ describe("telegram thread bindings", () => {
           }
         },
       });
-      if (revokeAt === "before-create") {
-        await expect(result).rejects.toThrow("failed to bind");
-        expect(nativeCreates).toBe(0);
-        expect(manager.getByConversationId("-100200300:topic:88")).toBeUndefined();
-      } else {
-        await expect(result).resolves.toMatchObject({
-          targetSessionKey: "agent:main:created-topic",
-        });
-        expect(nativeCreates).toBe(1);
-        expect(manager.getByConversationId("-100200300:topic:88")).toMatchObject({
-          targetSessionKey: "agent:main:created-topic",
-        });
-      }
+      await expect(result).rejects.toThrow("failed to bind");
+      expect(nativeCreates).toBe(revokeAt === "before-create" ? 0 : 1);
+      expect(manager.getByConversationId("-100200300:topic:88")).toBeUndefined();
     },
   );
 
@@ -660,6 +651,35 @@ describe("telegram thread bindings", () => {
     });
 
     expect(manager.listBindings()).toStrictEqual([]);
+  });
+
+  it("migrates a legacy metadata generation without exposing it as user metadata", async () => {
+    const accountId = "legacy-generation";
+    const conversationId = "thread";
+    await fixture.store.register(resolveStoredBindingKey({ accountId, conversationId }), {
+      accountId,
+      conversationId,
+      targetKind: "acp",
+      targetSessionKey: "agent:main:legacy-fork",
+      boundAt: 100,
+      lastActivityAt: 100,
+      metadata: {
+        retained: "yes",
+        __threadBindingGeneration: "legacy-generation-token",
+      },
+    });
+
+    const manager = await createTelegramThreadBindingManager({ accountId });
+    const raw = manager.getByConversationId(conversationId);
+    expect(raw).toMatchObject({ generation: "legacy-generation-token" });
+    expect(raw?.metadata).toStrictEqual({ retained: "yes" });
+    const projected = await getSessionBindingService().resolveByConversationAsync({
+      channel: "telegram",
+      accountId,
+      conversationId,
+    });
+    expect(projected).toMatchObject({ generation: "legacy-generation-token" });
+    expect(projected?.metadata).not.toHaveProperty("__threadBindingGeneration");
   });
 
   it.each([

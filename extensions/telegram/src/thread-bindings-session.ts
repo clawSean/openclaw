@@ -20,7 +20,7 @@ export function toSessionBindingRecord(
   const lifecycleDuration = (field: "idleTimeoutMs" | "maxAgeMs") =>
     typeof record[field] === "number" ? Math.max(0, Math.floor(record[field])) : defaults[field];
   return projectThreadBindingRecord(record, {
-    generation: normalizeOptionalString(record.metadata?.["__threadBindingGeneration"]),
+    generation: normalizeOptionalString(record.generation),
     conversation: {
       channel: "telegram",
       conversationId: record.conversationId,
@@ -71,11 +71,8 @@ export function fromSessionBindingInput(params: {
     boundBy: normalizeOptionalString(metadata.boundBy) ?? previous?.boundBy,
     boundAt: now,
     lastActivityAt: now,
-    metadata: {
-      ...previous?.metadata,
-      ...metadata,
-      __threadBindingGeneration: randomUUID(),
-    },
+    generation: randomUUID(),
+    metadata: { ...previous?.metadata, ...metadata },
     ...(previous?.expiresAt !== undefined ? { expiresAt: previous.expiresAt } : {}),
   };
 
