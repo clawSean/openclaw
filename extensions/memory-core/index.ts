@@ -65,7 +65,7 @@ function createLazyMemoryTool(params: {
     label: params.contract.label,
     name: params.contract.name,
     description: params.contract.describe(initialContext.sources),
-    parameters: params.contract.parameters,
+    parameters: params.contract.parameters(initialContext.sources),
     prepareArguments: params.contract.prepareArguments,
     execute: async (toolCallId, toolParams, signal, onUpdate) => {
       toolPromise ??= loadMemoryToolsModule().then((module) => params.load(module, params.options));
@@ -333,7 +333,10 @@ export default definePluginEntry({
           agentId: params.agentId,
           agentSessionKey: params.agentSessionKey,
         });
-        return [...(context ? buildMemoryPromptSection(params) : []), ...projectInstruction];
+        return [
+          ...(context ? buildMemoryPromptSection(params, context.sources.hasWiki) : []),
+          ...projectInstruction,
+        ];
       },
       flushPlanResolver: buildMemoryFlushPlan,
       runtime: memoryRuntime,

@@ -3,6 +3,7 @@ import type { AcquireConfiguredProviderLocalService } from "openclaw/plugin-sdk/
 import {
   asToolParamsRecord,
   type AnyAgentTool,
+  listMemoryCorpusSupplements,
   resolveMemorySearchIndexConfig,
   type MemoryPromptSectionBuilder,
   type OpenClawConfig,
@@ -24,31 +25,37 @@ export type MemoryToolOptions = {
   runInBackgroundContext?: MemoryCoreRuntimeHost["runInBackgroundContext"];
 };
 
-const MemorySearchSchema = {
-  type: "object",
-  properties: {
-    query: { type: "string" },
-    maxResults: { type: "integer", minimum: 1 },
-    minScore: { type: "number" },
-    corpus: { type: "string", enum: ["memory", "wiki", "all", "sessions"] },
-  },
-  required: ["query"],
-  additionalProperties: false,
-} as const satisfies TSchema;
+// Combined recall remains supported without optional wiki supplements.
+const MemorySearchSchema = ({ hasWiki }: MemorySourceContract) =>
+  ({
+    type: "object",
+    properties: {
+      query: { type: "string" },
+      maxResults: { type: "integer", minimum: 1 },
+      minScore: { type: "number" },
+      corpus: {
+        type: "string",
+        enum: hasWiki ? ["memory", "wiki", "all", "sessions"] : ["memory", "all", "sessions"],
+      },
+    },
+    required: ["query"],
+    additionalProperties: false,
+  }) as const satisfies TSchema;
 
-const MemoryGetSchema = {
-  type: "object",
-  properties: {
-    path: { type: "string" },
-    from: { type: "integer", minimum: 1 },
-    lines: { type: "integer", minimum: 1 },
-    corpus: { type: "string", enum: ["memory", "wiki", "all"] },
-  },
-  required: ["path"],
-  additionalProperties: false,
-} as const satisfies TSchema;
+const MemoryGetSchema = ({ hasWiki }: MemorySourceContract) =>
+  ({
+    type: "object",
+    properties: {
+      path: { type: "string" },
+      from: { type: "integer", minimum: 1 },
+      lines: { type: "integer", minimum: 1 },
+      corpus: { type: "string", enum: hasWiki ? ["memory", "wiki", "all"] : ["memory", "all"] },
+    },
+    required: ["path"],
+    additionalProperties: false,
+  }) as const satisfies TSchema;
 
-type MemorySourceContract = Readonly<{ files: string; search: string }>;
+type MemorySourceContract = Readonly<{ files: string; search: string; hasWiki: boolean }>;
 
 function resolveMemorySourceContract(
   settings: NonNullable<ReturnType<typeof resolveMemorySearchIndexConfig>>,
@@ -61,6 +68,8 @@ function resolveMemorySourceContract(
     .join(", ");
   return {
     files,
+    // Resolve at tool/prompt assembly, after all plugins register in the active scope.
+    hasWiki: listMemoryCorpusSupplements().length > 0,
     search: settings.searchSources.includes("sessions")
       ? `${files}, indexed session transcripts`
       : files,
@@ -113,16 +122,16 @@ export const MEMORY_SEARCH_TOOL_CONTRACT = {
     }
     return normalized;
   },
-  describe: ({ search }: MemorySourceContract) =>
-    `Semantically search ${search} when an answer depends on prior work, decisions, dates, people, preferences, or todos not already present in the current turn. Do not repeat memory retrieval when supplied context fully answers the question. Omit \`corpus\` to search those configured sources. Session results are transcript search references, not readable memory-file paths. Optional \`corpus=wiki\` or \`corpus=all\` also searches registered compiled-wiki supplements; use \`corpus=all\` only when compiled wiki supplements are needed. \`corpus=memory\` restricts hits to indexed memory files (excludes session transcript chunks from ranking). \`corpus=sessions\` searches indexed session transcripts under the same visibility rules as session history tools and returns unavailable when semantic session indexing is disabled. ${SEARCH_CORPUS_OUTCOME_GUIDANCE} If response has disabled=true or stale=true, tell the user and include the warning/action guidance.`,
+  describe: ({ search, hasWiki }: MemorySourceContract) =>
+    `Semantically search ${search} when an answer depends on prior work, decisions, dates, people, preferences, or todos not already present in the current turn. Do not repeat memory retrieval when supplied context fully answers the question. Omit \`corpus\` to search those configured sources. Session results are transcript search references, not readable memory-file paths.${hasWiki ? " Optional `corpus=wiki` or `corpus=all` also searches registered compiled-wiki supplements; use `corpus=all` only when compiled wiki supplements are needed." : ""} \`corpus=memory\` restricts hits to indexed memory files (excludes session transcript chunks from ranking). \`corpus=sessions\` searches indexed session transcripts under the same visibility rules as session history tools and returns unavailable when semantic session indexing is disabled. ${SEARCH_CORPUS_OUTCOME_GUIDANCE} If response has disabled=true or stale=true, tell the user and include the warning/action guidance.`,
 } as const;
 
 export const MEMORY_GET_TOOL_CONTRACT = {
   label: "Memory Get",
   name: "memory_get",
   parameters: MemoryGetSchema,
-  describe: ({ files }: MemorySourceContract) =>
-    `Safe exact excerpt read from ${files}. Session transcript paths are unsupported; use the available session-history workflow for session hits. Defaults to a bounded excerpt when lines are omitted and includes truncation/continuation info when more content exists. \`corpus=wiki\` reads registered compiled-wiki supplements. ${GET_READ_OUTCOME_GUIDANCE} ${SEARCH_CORPUS_OUTCOME_GUIDANCE}`,
+  describe: ({ files, hasWiki }: MemorySourceContract) =>
+    `Safe exact excerpt read from ${files}. Session transcript paths are unsupported; use the available session-history workflow for session hits. Defaults to a bounded excerpt when lines are omitted and includes truncation/continuation info when more content exists.${hasWiki ? " `corpus=wiki` reads registered compiled-wiki supplements." : ""} ${GET_READ_OUTCOME_GUIDANCE} ${SEARCH_CORPUS_OUTCOME_GUIDANCE}`,
 } as const;
 
 export type MemoryToolContract = (
@@ -130,10 +139,10 @@ export type MemoryToolContract = (
   | typeof MEMORY_GET_TOOL_CONTRACT
 ) & { prepareArguments?: AnyAgentTool["prepareArguments"] };
 
-export function buildMemoryPromptSection({
-  availableTools,
-  citationsMode,
-}: Parameters<MemoryPromptSectionBuilder>[0]): string[] {
+export function buildMemoryPromptSection(
+  { availableTools, citationsMode }: Parameters<MemoryPromptSectionBuilder>[0],
+  hasWiki = false,
+): string[] {
   const hasMemorySearch = availableTools.has("memory_search");
   const hasMemoryGet = availableTools.has("memory_get");
   if (!hasMemorySearch && !hasMemoryGet) {
@@ -144,7 +153,7 @@ export function buildMemoryPromptSection({
   const guidance = hasMemorySearch
     ? `When an answer depends on prior work, decisions, dates, people, preferences, or todos not already present in the current turn, run memory_search without corpus to search the configured sources${
         hasMemoryGet ? "; for memory-file hits, use memory_get to pull only the needed lines" : ""
-      }. Do not repeat memory retrieval when supplied context fully answers the question. Use corpus=all only when compiled wiki supplements are needed. If low confidence after search, say you checked.`
+      }. Do not repeat memory retrieval when supplied context fully answers the question.${hasWiki ? " Use corpus=all only when compiled wiki supplements are needed." : ""} If low confidence after search, say you checked.`
     : "When an answer depends on prior work, decisions, dates, people, preferences, or todos not already present in the current turn and points to a specific memory file, run memory_get to pull only the needed lines. Do not repeat memory retrieval when supplied context fully answers the question. If low confidence after reading, say you checked.";
   const sessionGuidance = !hasMemorySearch
     ? []

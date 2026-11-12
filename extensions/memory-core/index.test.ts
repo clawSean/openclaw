@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
+import { withPluginRuntimeRegistryScope } from "openclaw/plugin-sdk/channel-test-helpers";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import type { OpenClawPluginApi, OpenClawPluginService } from "openclaw/plugin-sdk/core";
-import type { AnyAgentTool } from "openclaw/plugin-sdk/memory-core-host-runtime-core";
+import {
+  clearMemoryPluginState,
+  type AnyAgentTool,
+} from "openclaw/plugin-sdk/memory-core-host-runtime-core";
+import { registerMemoryCorpusSupplement } from "openclaw/plugin-sdk/memory-host-core";
 import { createTestPluginApi } from "openclaw/plugin-sdk/plugin-test-api";
-import { createPluginRuntimeMock } from "openclaw/plugin-sdk/plugin-test-runtime";
+import {
+  createEmptyPluginRegistry,
+  createPluginRuntimeMock,
+} from "openclaw/plugin-sdk/plugin-test-runtime";
 import { Value } from "typebox/value";
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { buildMemoryFlushPlan } from "./src/flush-plan.js";
@@ -102,18 +110,22 @@ function captureMemoryModelContract(initialConfig: OpenClawConfig) {
     config: initialConfig,
     runtime: hostRuntimeWithConfig(() => initialConfig),
   });
-  const create = (name: string) => {
+  const create = (name: string, agentId: string) => {
     const factory = tools.find(([, options]) => options?.names?.includes(name))?.[0];
     assert(typeof factory === "function", `Missing tool factory: ${name}`);
     const tool = factory({
-      agentId: "main",
+      agentId,
       config: initialConfig,
       getRuntimeConfig: () => initialConfig,
     });
     assert(tool && !Array.isArray(tool), `Expected one tool: ${name}`);
     return tool;
   };
-  return { search: create("memory_search"), get: create("memory_get"), promptBuilder };
+  const createTools = (agentId = "main") => ({
+    search: create("memory_search", agentId),
+    get: create("memory_get", agentId),
+  });
+  return { ...createTools(), createTools, promptBuilder };
 }
 
 function indexConfig(memory?: string): OpenClawConfig {
@@ -124,6 +136,88 @@ function indexConfig(memory?: string): OpenClawConfig {
 }
 
 describe("buildPromptSection", () => {
+  it("projects wiki availability at assembly after supplement registration and removal", async () => {
+    const registry = createEmptyPluginRegistry();
+    const config: OpenClawConfig = { agents: { entries: { main: {} } } };
+    const { createMemoryGetTool, createMemorySearchTool } = await import("./src/tools.js");
+    await withPluginRuntimeRegistryScope(registry, async () => {
+      const model = captureMemoryModelContract(config);
+      const assertContract = (hasWiki: boolean) => {
+        const { search, get } = model.createTools();
+        expect(search.parameters).toMatchObject({
+          properties: {
+            corpus: {
+              enum: hasWiki ? ["memory", "wiki", "all", "sessions"] : ["memory", "all", "sessions"],
+            },
+          },
+        });
+        expect(get.parameters).toMatchObject({
+          properties: { corpus: { enum: hasWiki ? ["memory", "wiki", "all"] : ["memory", "all"] } },
+        });
+        const prompt = model
+          .promptBuilder({
+            availableTools: new Set(["memory_search", "memory_get"]),
+            agentId: "main",
+          })
+          .join("\n");
+        for (const text of [search.description, get.description, prompt]) {
+          expect(/\bwiki\b|corpus=all/i.test(text)).toBe(hasWiki);
+        }
+        expect(Value.Check(search.parameters, { query: "prior decision" })).toBe(true);
+        expect(Value.Check(get.parameters, { path: "MEMORY.md" })).toBe(true);
+        // Combined recall remains valid even when the optional wiki is absent.
+        expect(Value.Check(search.parameters, { query: "decision", corpus: "all" })).toBe(true);
+        expect(Value.Check(get.parameters, { path: "MEMORY.md", corpus: "all" })).toBe(true);
+        expect(createMemorySearchTool({ config, agentId: "main" })?.parameters).toEqual(
+          search.parameters,
+        );
+        expect(createMemoryGetTool({ config, agentId: "main" })?.parameters).toEqual(
+          get.parameters,
+        );
+      };
+      assertContract(false);
+      registerMemoryCorpusSupplement("wiki-fixture", {
+        search: async () => [],
+        get: async () => null,
+      });
+      assertContract(true);
+      // Existing tool snapshots stay stable; the next assembly sees the new registration.
+      expect(Value.Check(model.search.parameters, { query: "decision", corpus: "wiki" })).toBe(
+        false,
+      );
+      clearMemoryPluginState();
+      assertContract(false);
+    });
+  });
+
+  it("does not advertise another agent scope's wiki supplement", () => {
+    const config: OpenClawConfig = { agents: { entries: { main: {}, other: {} } } };
+    const withWiki = createEmptyPluginRegistry();
+    const withoutWiki = createEmptyPluginRegistry();
+    withPluginRuntimeRegistryScope(withWiki, () => {
+      registerMemoryCorpusSupplement("wiki-fixture", {
+        search: async () => [],
+        get: async () => null,
+      });
+      const model = captureMemoryModelContract(config);
+      withPluginRuntimeRegistryScope(withoutWiki, () => {
+        const { search, get } = model.createTools("other");
+        expect(Value.Check(search.parameters, { query: "decision", corpus: "wiki" })).toBe(false);
+        expect(Value.Check(get.parameters, { path: "pages/decision.md", corpus: "wiki" })).toBe(
+          false,
+        );
+        expect(
+          model
+            .promptBuilder({ availableTools: new Set(["memory_search"]), agentId: "other" })
+            .join("\n"),
+        ).not.toMatch(/\bwiki\b|corpus=all/i);
+      });
+      expect(
+        Value.Check(model.createTools().search.parameters, { query: "decision", corpus: "wiki" }),
+      ).toBe(true);
+    });
+  });
+
   it("prepares explicitly owned memory tools without resolving the system agent", () => {
     let systemAgentReads = 0;
     const defaults = {

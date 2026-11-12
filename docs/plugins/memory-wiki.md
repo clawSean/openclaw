@@ -40,6 +40,13 @@ Practical rule:
 - `wiki_search` / `wiki_get` when you want wiki-specific ranking, provenance, or page-level belief structure
 - `memory_search corpus=all` to span both layers in one call, when the active memory plugin supports corpus selection
 
+Memory Core advertises `corpus=wiki` and wiki-specific recall guidance only
+when a compiled-wiki supplement is registered in the active runtime. Without
+one, `memory_search` still offers `memory`, `all`, and `sessions`, and
+`memory_get` still offers `memory` and `all`. Omitting `corpus` continues to use
+the configured memory sources. Registration changes take effect at the next tool
+and prompt assembly; already assembled tool definitions remain unchanged.
+
 A common local-first setup uses builtin memory for recall and `memory-wiki` in
 `bridge` mode for durable synthesized pages. See the bridge-mode example under
 [Configuration](#configuration).
