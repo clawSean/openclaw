@@ -190,6 +190,43 @@ export function createGoogleChatWebhookRequestHandler(params: {
 
         const dispatchTarget = selectedTarget;
         dispatchTarget.statusSink?.({ lastInboundAt: Date.now() });
+        const isAddOn = isRecord(raw.commonEventObject) && raw.commonEventObject.hostApp === "CHAT";
+        // Initial add-on App Home events have user/time context but no interaction payload.
+        const isAppHome = isAddOn
+          ? isRecord(raw.chat) &&
+            isRecord(raw.chat.user) &&
+            typeof raw.chat.eventTime === "string" &&
+            Object.keys(raw.chat).every((key) => key === "user" || key === "eventTime")
+          : (raw.type ?? raw.eventType) === "APP_HOME";
+        if (isAppHome) {
+          const renderActions = {
+            action: {
+              navigations: [
+                {
+                  pushCard: {
+                    header: { title: "OpenClaw" },
+                    sections: [
+                      {
+                        widgets: [
+                          {
+                            textParagraph: {
+                              text: "Open the Chat tab and send a message to get started.",
+                            },
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          };
+          // Home is a synchronous UI response, never a durably accepted agent turn.
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify(isAddOn ? renderActions : { renderActions }));
+          return true;
+        }
         try {
           const admission = await dispatchTarget.ingress.receive(raw);
           if (admission.kind === "invalid") {

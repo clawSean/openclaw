@@ -10,7 +10,10 @@ import { createMockServerResponse } from "openclaw/plugin-sdk/test-env";
 import { afterAll, afterEach, expect, it, vi } from "vitest";
 import type { ResolvedGoogleChatAccount } from "./accounts.js";
 import { verifyGoogleChatRequest } from "./auth.js";
-import { registerGoogleChatWebhookTarget } from "./monitor-routing.js";
+import {
+  registerGoogleChatWebhookTarget,
+  setGoogleChatWebhookEventProcessor,
+} from "./monitor-routing.js";
 
 // mock-isolation: routing cases supply verification outcomes without live Google credentials.
 vi.mock("./auth.js", () => ({ verifyGoogleChatRequest: vi.fn() }));
@@ -85,6 +88,7 @@ async function dispatch(req: IncomingMessage) {
 }
 
 afterEach(() => {
+  setGoogleChatWebhookEventProcessor(async () => {});
   for (const stop of unregister.splice(0)) {
     stop();
   }
@@ -152,4 +156,80 @@ it("rejects invalid bearer before attempting to read the body", async () => {
   const on = vi.spyOn(req, "on");
   expect((await dispatch(req)).statusCode).toBe(401);
   expect(on.mock.calls.map(([event]) => event)).not.toContain("data");
+});
+
+it.each([false, true])(
+  "serves authenticated App Home without an agent turn (add-on: %s)",
+  async (addon) => {
+    const processEvent = vi.fn(async () => {});
+    setGoogleChatWebhookEventProcessor(processEvent);
+    const targets = registerTwoTargets();
+    const payload = addon
+      ? {
+          commonEventObject: { hostApp: "CHAT" },
+          authorizationEventObject: { systemIdToken: "addon-token" },
+          chat: { user: { name: "users/123" }, eventTime: "2026-11-12T00:00:00Z" },
+        }
+      : { type: "APP_HOME", user: { name: "users/123" } };
+    vi.mocked(verifyGoogleChatRequest)
+      .mockReset()
+      .mockResolvedValueOnce({ ok: false, reason: "invalid" })
+      .mockResolvedValueOnce({ ok: true });
+
+    const res = await dispatch(request(addon ? "" : "Bearer test-token", payload));
+    expect(res.statusCode).toBe(200);
+    const response = JSON.parse(res.body);
+    expect(addon ? response : response.renderActions).toEqual({
+      action: {
+        navigations: [
+          {
+            pushCard: {
+              header: { title: "OpenClaw" },
+              sections: [
+                {
+                  widgets: [
+                    {
+                      textParagraph: {
+                        text: "Open the Chat tab and send a message to get started.",
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    expect(res.getHeader("x-openclaw-delivery-accepted")).toBeUndefined();
+    expect(targets.every((entry) => entry.ingress.receive.mock.calls.length === 0)).toBe(true);
+    expect(processEvent).not.toHaveBeenCalled();
+
+    vi.mocked(verifyGoogleChatRequest).mockResolvedValue({ ok: false, reason: "invalid" });
+    const rejected = await dispatch(request(addon ? "" : "Bearer test-token", payload));
+    expect(rejected.statusCode).toBe(401);
+    expect(rejected.body).toBe("unauthorized");
+    expect(processEvent).not.toHaveBeenCalled();
+  },
+);
+
+it("does not mistake add-on interaction payloads for App Home", async () => {
+  const targets = registerTwoTargets();
+  vi.mocked(verifyGoogleChatRequest)
+    .mockReset()
+    .mockResolvedValueOnce({ ok: false, reason: "invalid" })
+    .mockResolvedValueOnce({ ok: true });
+  const res = await dispatch(
+    request("Bearer test-token", {
+      commonEventObject: { hostApp: "CHAT" },
+      chat: {
+        user: { name: "users/123" },
+        eventTime: "2026-11-12T00:00:00Z",
+        appCommandPayload: { appCommandMetadata: { appCommandId: 1 } },
+      },
+    }),
+  );
+  expect(res.statusCode).toBe(400);
+  expect(res.body).toBe("invalid payload");
+  expect(targets[1]?.ingress.receive).toHaveBeenCalledOnce();
 });

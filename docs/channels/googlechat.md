@@ -55,6 +55,14 @@ Once the gateway is running and your email is on the visibility list:
    - The bot does _not_ appear in the Marketplace browse list because it is a private app. Search for it by name.
 4. Select the bot, click **Add** or **Chat**, and send a message.
 
+## App Home
+
+To show a welcome card in the app's **Home** tab, enable **Support App Home** in the Google Chat API configuration and route the **App home** trigger to the same webhook URL. See Google's [App Home setup](https://developers.google.com/workspace/chat/send-app-home-card-message).
+
+The card directs users to the **Chat** tab. It contains no private account or agent details and does not start an agent turn, create a session, or queue a message. Native Chat events and Google Workspace add-on events use the same request authentication as messages. Opening Home does not approve pairing or grant access to the agent.
+
+No additional OpenClaw configuration is needed. Leave **Support App Home** unchecked in Google Cloud if you do not want the Home tab. Custom cards, forms, and Home-specific button actions are not supported.
+
 ## Public URL (Webhook-only)
 
 Google Chat webhooks require a public HTTPS endpoint. For security, expose **only the `/googlechat` path** to the internet and keep the OpenClaw dashboard and other endpoints private.
@@ -149,7 +157,7 @@ Configure the tunnel ingress rules to route only the webhook path:
 
 After request authentication, OpenClaw removes the add-on authorization object from storage and durably queues Google Chat `MESSAGE` events before returning `200`. A persistence failure returns `503`, allowing Google Chat to retry instead of acknowledging an event that could be lost. A durably queued `200` carries `x-openclaw-delivery-accepted: durable`. Non-message action acks and error responses omit the marker, so reverse proxies can require it to distinguish durable acceptance from a generic `200`.
 
-Pending or retryable messages survive a Gateway restart, remain serialized per space, and use the Google Chat message resource name to suppress duplicate queue entries while the active or retained completion record exists. Non-message actions keep their existing detached webhook path and do not receive this durable-queue guarantee. Delivery remains at least once across the queue-to-agent boundary, so a crash during handoff can replay a turn.
+Pending or retryable messages survive a Gateway restart, remain serialized per space, and use the Google Chat message resource name to suppress duplicate queue entries while the active or retained completion record exists. App Home responds synchronously without queueing; other non-message actions keep their existing detached webhook path. Neither receives this durable-queue guarantee. Delivery remains at least once across the queue-to-agent boundary, so a crash during handoff can replay a turn.
 
 ## Targets
 
