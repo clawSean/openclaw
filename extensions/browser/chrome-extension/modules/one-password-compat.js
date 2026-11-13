@@ -1,62 +1,178 @@
-// Opt-in, command-scoped cooperation only. Never reads extension frames or vaults.
+// Explicit shared-document cooperation. Never reads extension frames or vaults.
 export function beginIgnoreScope() {
   const body = document.body;
   if (!body) {
-    return () => true;
+    throw new Error("The page has no body yet.");
   }
-  const key = Symbol.for("openclaw.sean.1password.command-scope");
-  let state = globalThis[key];
-  if (!state || state.body !== body) {
-    const before = body.getAttribute("data-1p-ignore");
-    body.setAttribute("data-1p-ignore", "true");
-    state = { body, before, count: 0, changed: false };
-    state.observer = new MutationObserver(() => {
-      state.changed = true;
-    });
-    state.observer.observe(body, { attributes: true, attributeFilter: ["data-1p-ignore"] });
-    globalThis[key] = state;
+  const key = Symbol.for("openclaw.sean.1password.document-scope");
+  const prior = globalThis[key];
+  if (prior?.body === body && prior.lease("renew")) {
+    return prior.lease;
   }
-  state.count++;
+  const before = body.getAttribute("data-1p-ignore");
+  body.setAttribute("data-1p-ignore", "true");
+  let changed = false;
   let done = false;
-  let expired = false;
-  function release() {
+  let timer;
+  const observer = new MutationObserver(() => {
+    changed = true;
+  });
+  observer.observe(body, { attributes: true, attributeFilter: ["data-1p-ignore"] });
+  function lease(operation) {
     if (done) {
-      return !expired;
+      return false;
+    }
+    changed ||= observer.takeRecords().length > 0;
+    clearTimeout(timer);
+    if (operation === "renew" && !changed && document.body === body) {
+      timer = setTimeout(() => lease("release"), 60_000);
+      return true;
     }
     done = true;
-    clearTimeout(timer);
-    state.count--;
-    if (state.count === 0) {
-      state.changed ||= state.observer.takeRecords().length > 0;
-      state.observer.disconnect();
-      if (!state.changed && body.getAttribute("data-1p-ignore") === "true") {
-        if (state.before === null) {
-          body.removeAttribute("data-1p-ignore");
-        } else {
-          body.setAttribute("data-1p-ignore", state.before);
-        }
-      }
-      if (globalThis[key] === state) {
-        delete globalThis[key];
+    observer.disconnect();
+    globalThis.removeEventListener("pagehide", onPageHide);
+    if (!changed && body.getAttribute("data-1p-ignore") === "true") {
+      if (before === null) {
+        body.removeAttribute("data-1p-ignore");
+      } else {
+        body.setAttribute("data-1p-ignore", before);
       }
     }
-    return !expired;
+    if (globalThis[key]?.lease === lease) {
+      delete globalThis[key];
+    }
+    return operation === "release";
   }
-  // Detached workers cannot run finally. A page-owned deadline prevents a
-  // permanently suppressed field; an expired command is never reported success.
-  const timer = setTimeout(() => {
-    expired = true;
-    release();
-  }, 60_000);
-  return release;
+  const onPageHide = () => lease("release");
+  globalThis.addEventListener("pagehide", onPageHide, { once: true });
+  globalThis[key] = { body, lease };
+  lease("renew");
+  return lease;
 }
+
+const callLease = (sendCommand, objectId, operation) =>
+  sendCommand("Runtime.callFunctionOn", {
+    objectId,
+    functionDeclaration: "function(operation) { return this(operation); }",
+    arguments: [{ value: operation }],
+    returnByValue: true,
+  });
 
 export function createOnePasswordCompatibility(isAllowed = () => true) {
   const enabled = new Set();
+  const scopes = new Map();
+  const stopping = new Map();
+  async function cleanup(tabId, cleanupCommand) {
+    enabled.delete(tabId);
+    const scope = scopes.get(tabId);
+    if (!scope) {
+      return;
+    }
+    scopes.delete(tabId);
+    clearTimeout(scope.timer);
+    await scope.pending?.catch(() => {});
+    if (!scope.objectId) {
+      return;
+    }
+    const dispatch = cleanupCommand ?? scope.sendCommand;
+    try {
+      await callLease(dispatch, scope.objectId, "release");
+    } finally {
+      await dispatch("Runtime.releaseObject", { objectId: scope.objectId }).catch(() => {});
+    }
+  }
+  function stop(tabId, cleanupCommand) {
+    const existing = stopping.get(tabId);
+    if (existing) {
+      return existing;
+    }
+    const pending = cleanup(tabId, cleanupCommand);
+    stopping.set(tabId, pending);
+    void pending
+      .finally(() => {
+        if (stopping.get(tabId) === pending) {
+          stopping.delete(tabId);
+        }
+      })
+      .catch(() => {});
+    return pending;
+  }
+  async function ensure(tabId, sendCommand, checkAccess) {
+    let scope = scopes.get(tabId);
+    if (scope) {
+      await scope.pending;
+      const result = await callLease(sendCommand, scope.objectId, "renew");
+      if (result?.exceptionDetails || result?.result?.value !== true) {
+        await stop(tabId).catch(() => {});
+        throw new Error(
+          "The page changed or compatibility expired; action was not sent. Enable it again to retry deliberately.",
+        );
+      }
+      return;
+    }
+    scope = { sendCommand, checkAccess };
+    scopes.set(tabId, scope);
+    async function renew() {
+      if (scopes.get(tabId) !== scope) {
+        return;
+      }
+      try {
+        if (!isAllowed() || !enabled.has(tabId)) {
+          throw new Error("Compatibility scope ended");
+        }
+        await checkAccess();
+        const result = await callLease(sendCommand, scope.objectId, "renew");
+        if (result?.exceptionDetails || result?.result?.value !== true) {
+          throw new Error("The page changed or the compatibility lease expired");
+        }
+        if (scopes.get(tabId) === scope) {
+          scope.timer = setTimeout(renew, 10_000);
+        }
+      } catch {
+        await stop(tabId).catch(() => {});
+      }
+    }
+    scope.pending = (async () => {
+      const result = await sendCommand("Runtime.evaluate", {
+        expression: `(${beginIgnoreScope.toString()})()`,
+        returnByValue: false,
+      });
+      if (result?.exceptionDetails || !result?.result?.objectId) {
+        throw new Error("Could not pause 1Password suggestions; action was not sent.");
+      }
+      scope.objectId = result.result.objectId;
+      if (scopes.get(tabId) !== scope || !enabled.has(tabId)) {
+        throw new Error("Compatibility was disabled before the action; action was not sent.");
+      }
+      scope.timer = setTimeout(renew, 10_000);
+    })();
+    try {
+      await scope.pending;
+    } catch (error) {
+      // stop() may be awaiting this promise; do not await it recursively here.
+      if (scopes.get(tabId) === scope) {
+        scopes.delete(tabId);
+        enabled.delete(tabId);
+      }
+      throw error;
+    }
+  }
   return {
     enabled: (tabId) => enabled.has(tabId),
-    set: (tabId, value) => (value ? enabled.add(tabId) : enabled.delete(tabId)),
-    async run(tabId, sessionId, method, sendCommand, action) {
+    set: async (tabId, value) => {
+      if (!value) {
+        await stop(tabId);
+        return;
+      }
+      await stopping.get(tabId);
+      enabled.add(tabId);
+    },
+    disarm: (tabId) => enabled.delete(tabId),
+    disarmAll: () => enabled.clear(),
+    stop,
+    stopAll: () =>
+      Promise.allSettled([...new Set([...enabled, ...scopes.keys()])].map((tabId) => stop(tabId))),
+    async run(tabId, sessionId, method, sendCommand, action, checkAccess = async () => {}) {
       if (
         !isAllowed() ||
         !enabled.has(tabId) ||
@@ -70,41 +186,12 @@ export function createOnePasswordCompatibility(isAllowed = () => true) {
       ) {
         return action();
       }
-      const scope = await sendCommand("Runtime.evaluate", {
-        expression: `(${beginIgnoreScope.toString()})()`,
-        returnByValue: false,
-      });
-      const objectId = scope?.result?.objectId;
-      if (scope?.exceptionDetails || !objectId) {
-        throw new Error("Could not enable temporary 1Password compatibility; action was not sent.");
+      await ensure(tabId, sendCommand, checkAccess);
+      await checkAccess();
+      if (!enabled.has(tabId)) {
+        throw new Error("Compatibility ended before action; action was not sent.");
       }
-      let result;
-      let error;
-      try {
-        result = await action();
-      } catch (cause) {
-        error = cause;
-      }
-      try {
-        const restored = await sendCommand("Runtime.callFunctionOn", {
-          objectId,
-          functionDeclaration: "function() { return this(); }",
-          returnByValue: true,
-        });
-        if (restored?.exceptionDetails || restored?.result?.value !== true) {
-          throw new Error(
-            "1Password compatibility scope expired or could not restore; do not replay the action.",
-          );
-        }
-      } catch (cause) {
-        error ??= cause;
-      } finally {
-        await sendCommand("Runtime.releaseObject", { objectId }).catch(() => {});
-      }
-      if (error) {
-        throw error instanceof Error ? error : new Error(String(error));
-      }
-      return result;
+      return action();
     },
   };
 }

@@ -57,6 +57,7 @@ export type TabAccessEventPolicy = {
 
 export function registerTabAccessEvents(options: {
   chromeApi?: TabAccessEventsChromeApi;
+  endCompatibility?(tabId: number): void;
   accessReady: Promise<unknown>;
   policy: TabAccessEventPolicy;
   attachments: Map<

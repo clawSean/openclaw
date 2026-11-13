@@ -58,6 +58,65 @@ describe("relay command authorization", () => {
     ).resolves.toMatchObject({ onePasswordCompatibility: false });
   });
 
+  it("revokes the relay before waiting for 1Password cleanup on disconnect", async () => {
+    const harness = await loadBackground();
+    const socket = harness.sockets[0];
+    if (!socket) {
+      throw new Error("expected relay socket");
+    }
+    await harness.authenticate(socket);
+    harness.shareTab(41);
+    socket.receive({ type: "attach", seq: 110, tabId: 41 });
+    await vi.waitFor(() =>
+      expect(socket.send.mock.calls.map(([raw]) => JSON.parse(raw))).toContainEqual({
+        type: "result",
+        seq: 110,
+        result: { targetId: "tab-41" },
+      }),
+    );
+    await sendRuntimeMessage(harness, {
+      type: "setOnePasswordCompatibility",
+      tabId: 41,
+      enabled: true,
+    });
+    const cleanup = createDeferred<Record<string, unknown>>();
+    harness.debuggerSendCommand.mockImplementation(async (_source, method) => {
+      if (method === "Runtime.evaluate") {
+        return { result: { objectId: "scope" } };
+      }
+      if (method === "Runtime.callFunctionOn") {
+        return cleanup.promise;
+      }
+      return {};
+    });
+    socket.receive({ type: "cdp", seq: 111, tabId: 41, method: "Runtime.evaluate" });
+    await vi.waitFor(() =>
+      expect(socket.send.mock.calls.map(([raw]) => JSON.parse(raw))).toContainEqual({
+        type: "result",
+        seq: 111,
+        result: { result: { objectId: "scope" } },
+      }),
+    );
+    const disconnected = sendRuntimeMessage(harness, {
+      type: "setConnectionEnabled",
+      enabled: false,
+    });
+    await vi.waitFor(() =>
+      expect(
+        harness.debuggerSendCommand.mock.calls.some(
+          ([, method]) => method === "Runtime.callFunctionOn",
+        ),
+      ).toBe(true),
+    );
+    socket.receive({ type: "cdp", seq: 112, tabId: 41, method: "DOM.getDocument" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(
+      harness.debuggerSendCommand.mock.calls.some(([, method]) => method === "DOM.getDocument"),
+    ).toBe(false);
+    cleanup.resolve({ result: { value: true } });
+    await expect(disconnected).resolves.toMatchObject({ ok: true });
+  });
+
   it("rejects every authority-bearing command after tab-group revocation", async () => {
     const harness = await loadBackground();
     const socket = harness.sockets[0];

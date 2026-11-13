@@ -79,6 +79,7 @@ export function createRelayCommandHandler({
                   authorized.method,
                   sendCommand,
                   () => sendCommand(authorized.method, authorized.params),
+                  () => requireTab(message.tabId, epoch),
                 )
               : await sendCommand(authorized.method, authorized.params);
           assertAttachment();

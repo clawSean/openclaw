@@ -4,6 +4,7 @@ import { ACCESS_MODE_ALL, ACCESS_MODE_SELECTED } from "./relay-core.js";
 /** Register Chrome lifecycle events that can grant, revoke, or project tab access. */
 export function registerTabAccessEvents({
   chromeApi = chrome,
+  endCompatibility,
   accessReady,
   policy,
   attachments,
@@ -21,6 +22,9 @@ export function registerTabAccessEvents({
   chromeApi.debugger.onEvent.addListener((source, method, params) => {
     if (typeof source.tabId !== "number") {
       return;
+    }
+    if (!source.sessionId && method === "Page.frameNavigated" && !params?.frame?.parentId) {
+      endCompatibility?.(source.tabId);
     }
     const accessEpoch = attachments.get(source.tabId)?.epoch;
     if (!accessEpoch || !policy.epochIsCurrent(source.tabId, accessEpoch)) {
@@ -45,6 +49,7 @@ export function registerTabAccessEvents({
     // Preserve controlled-document pause evidence before native retirement revokes it.
     const revocation =
       reason === "canceled_by_user" ? policy.beginRevocation(source.tabId) : undefined;
+    endCompatibility?.(source.tabId);
     nativeDetached(source.tabId);
     send({ type: "detached", tabId: source.tabId, reason });
     if (revocation === undefined) {
@@ -67,6 +72,7 @@ export function registerTabAccessEvents({
   });
 
   chromeApi.tabs.onRemoved.addListener((tabId) => {
+    endCompatibility?.(tabId);
     policy.retireTab(tabId);
     void detachDebugger(tabId).catch((error) =>
       console.warn("Debugger removal cleanup failed", error),
@@ -109,6 +115,7 @@ export function registerTabAccessEvents({
   });
 
   chromeApi.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status === "loading") endCompatibility?.(tabId);
     scheduleTabsSync();
     const generation = attachments.get(tabId);
     const pendingAttach = generation?.pending;

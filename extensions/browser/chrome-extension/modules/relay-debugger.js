@@ -1,5 +1,5 @@
 /** Physical debugger attachments and cleanup debt belong to exact native acquisitions. */
-export function createRelayDebugger({ policy, requireAutomationAllowed }) {
+export function createRelayDebugger({ policy, requireAutomationAllowed, beforeDetach }) {
   const attachments = new Map();
   const owners = new Set();
   let admission = 0;
@@ -37,6 +37,9 @@ export function createRelayDebugger({ policy, requireAutomationAllowed }) {
       if (record.native && !record.closed) {
         const target = record.targetId ? { targetId: record.targetId } : { tabId: record.tabId };
         try {
+          // Cleanup is restricted to the captured document lease on this exact
+          // native target. Revocation already happened; never reacquire a tab.
+          await beforeDetach?.(record.tabId, target).catch(() => {});
           await chrome.debugger.detach(target);
         } catch (error) {
           // GetForId + FindClientHost prove absence of this exact host/client.

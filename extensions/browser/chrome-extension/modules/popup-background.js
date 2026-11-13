@@ -139,6 +139,7 @@ export function createPopupMessageHandler({
   }
 
   async function unpair() {
+    compatibility?.disarmAll();
     pairingGeneration += 1;
     const disabledPersisted = onUnpairStart();
     policy.setEnabled(false);
@@ -179,6 +180,7 @@ export function createPopupMessageHandler({
     const generation = ++pairingGeneration;
 
     if (!enabled) {
+      compatibility?.disarmAll();
       // Revoke in memory immediately, then persist the disconnected state before
       // closing. If MV3 stops this worker mid-operation, startup stays fail-closed.
       policy.setEnabled(false);
@@ -236,6 +238,7 @@ export function createPopupMessageHandler({
       return { ok: false, error: "A tab handoff is already in progress." };
     }
     shareOnlyInFlight = true;
+    compatibility?.disarmAll();
     let transitionOpen = false;
     const endTransition = () => {
       if (!transitionOpen) return;
@@ -441,6 +444,7 @@ export function createPopupMessageHandler({
             }
             return;
           case "setAccessMode": {
+            compatibility?.disarmAll();
             if (shareOnlyInFlight) {
               sendResponse({ ok: false, error: "A tab handoff is already in progress." });
               return;
@@ -478,6 +482,7 @@ export function createPopupMessageHandler({
               }
               throw error;
             }
+            await compatibility?.stopAll();
             sendResponse({ ok: true, accessMode: storedMode });
             return;
           }
@@ -501,6 +506,7 @@ export function createPopupMessageHandler({
               sendResponse({ ok: false, error: "Browser access mode changed. Refresh and retry." });
               return;
             }
+            if (!msg.grant) compatibility?.disarm(tabId);
             const revocation = policy.beginRevocation(tabId);
             try {
               if ((await getConfig()).scopeCleanupPending) {
@@ -551,7 +557,7 @@ export function createPopupMessageHandler({
             if (!state.accessible || policy.mode !== ACCESS_MODE_SELECTED) {
               throw new Error("Share this tab in Selected tabs mode first.");
             }
-            compatibility.set(msg.tabId, msg.enabled);
+            await compatibility.set(msg.tabId, msg.enabled);
             sendResponse({ ok: true });
             return;
           }

@@ -69,7 +69,14 @@ const tabAccessPolicy = createTabAccessPolicy({
   addSelectedTab: (tabId, created) => sharedTabs.add(tabId, created),
   getGroupColor: async () => (await getConfig()).groupColor,
 });
-const relayDebugger = createRelayDebugger({ policy: tabAccessPolicy, requireAutomationAllowed });
+const relayDebugger = createRelayDebugger({
+  policy: tabAccessPolicy,
+  requireAutomationAllowed,
+  beforeDetach: (tabId, target) =>
+    compatibility.stop(tabId, (method, params) =>
+      chrome.debugger.sendCommand(target, method, params),
+    ),
+});
 const { attachments, detach: detachDebugger } = relayDebugger;
 const tabAccessReady = (async () => {
   const retiredState = await prepareRetiredCopilotState();
@@ -690,6 +697,9 @@ nativeBootstrap = createNativeBootstrapController({
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => handlePopupMessage(msg, reply));
 
 registerTabAccessEvents({
+  endCompatibility: (tabId) => {
+    void compatibility.stop(tabId).catch(() => {});
+  },
   accessReady: tabAccessReady,
   policy: tabAccessPolicy,
   attachments,
