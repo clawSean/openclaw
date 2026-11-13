@@ -95,6 +95,7 @@ function runConsult(runtime: TestRuntime, params: Partial<ConsultParams> = {}) {
     cfg: {},
     logger: { warn: vi.fn() },
     messageProvider: "voice",
+    messageChannel: "facetime",
     lane: "voice",
     transcript: [],
     surface: "a live phone call",

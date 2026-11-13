@@ -207,6 +207,8 @@ export async function consultRealtimeVoiceAgent(params: {
   /** Prepared concrete store; omitted callers retain their configured store selection. */
   storePath?: string;
   messageProvider: string;
+  /** Canonical channel used for per-person bootstrap identity resolution. */
+  messageChannel?: string;
   lane: string;
   runIdPrefix: string;
   args: unknown;
@@ -542,6 +544,7 @@ export async function consultRealtimeVoiceAgent(params: {
           agentId,
           ...toolAuthorityOverlay,
           // ASR voice ingress has no trace/client-tool or privileged handoff capability.
+          messageChannel: params.messageChannel,
           messageProvider: toolAuthorityOverlay.messageProvider,
           messageTo: consultDeliveryContext?.to,
           messageThreadId: consultDeliveryContext?.threadId,
