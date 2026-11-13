@@ -7,6 +7,11 @@ type MockIngressInput = {
   sessionKey?: string;
   runId?: string;
   senderIsOwner?: boolean;
+  runContext?: {
+    messageChannel?: string;
+    senderId?: string | null;
+    channelContext?: { sender?: { id?: string } };
+  };
 };
 
 const mocks = vi.hoisted(() => ({
@@ -165,6 +170,24 @@ describe("Discord voice ingress execution correlation", () => {
     for (const input of inputs) {
       expect(input).not.toHaveProperty("runId");
     }
+  });
+
+  it("forwards the authenticated voice speaker to bootstrap", async () => {
+    const { run } = fixture();
+    await run();
+
+    expect(mocks.agentCommandFromIngress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageChannel: "discord",
+        messageProvider: "discord-voice",
+        runContext: {
+          messageChannel: "discord",
+          senderId: "guest",
+          channelContext: { sender: { id: "guest" } },
+        },
+      }),
+      expect.anything(),
+    );
   });
 
   it.each([

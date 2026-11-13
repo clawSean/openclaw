@@ -129,6 +129,11 @@ export async function runDiscordVoiceAgentTurn(params: {
         agentId: params.entry.route.agentId,
         messageChannel: "discord",
         messageProvider: DISCORD_VOICE_MESSAGE_PROVIDER,
+        runContext: {
+          messageChannel: "discord",
+          senderId: params.userId,
+          channelContext: { sender: { id: params.userId } },
+        },
         accountId: params.accountId,
         extraSystemPrompt: context.extraSystemPrompt,
         senderIsOwner: context.senderIsOwner,
