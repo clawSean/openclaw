@@ -177,6 +177,10 @@ describe("generateVoiceResponse", () => {
     });
 
     expect(args.senderIsOwner).toBe(false);
+    expect(args.messageChannel).toBe("phone");
+    expect(args.messageProvider).toBe("voice");
+    expect(args.senderId).toBe("+15550001111");
+    expect(args.channelContext).toEqual({ sender: { id: "+15550001111" } });
     expect(args.prompt).toContain("[Audible call-opening context]");
     expect(args.prompt).toContain("Assistant: Welcome. What is the confirmation number?");
     expect(args.prompt).toContain(`Current caller message:\n${currentCallerSpeech}`);
