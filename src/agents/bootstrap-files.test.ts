@@ -181,6 +181,30 @@ describe("resolveBootstrapFilesForRun", () => {
     });
   });
 
+  it("exposes current authenticated channel sender facts to bootstrap hooks", async () => {
+    const workspaceDir = await workspace({ "AGENTS.md": "rules" });
+    let received: AgentBootstrapHookContext | undefined;
+    registerInternalHook("agent:bootstrap", (event) => {
+      received = event.context as AgentBootstrapHookContext;
+    });
+
+    await resolveBootstrapFilesForRun({
+      workspaceDir,
+      sessionKey: "agent:main:discord:channel:voice-room",
+      messageChannel: "discord",
+      messageProvider: "discord-voice",
+      senderId: "speaker-1",
+      channelContext: { sender: { id: "speaker-1" } },
+    });
+
+    expect(received).toMatchObject({
+      messageChannel: "discord",
+      messageProvider: "discord-voice",
+      senderId: "speaker-1",
+      channelContext: { sender: { id: "speaker-1" } },
+    });
+  });
+
   it.each([
     ["untrusted", "owner", false, true],
     ["agent", undefined, true, false],

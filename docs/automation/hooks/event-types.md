@@ -87,10 +87,12 @@ path; do not assume it is JSONL on disk.
 and `nextSessionKey`.
 
 **`agent:bootstrap`:** `workspaceDir`, mutable `bootstrapFiles`, and optional
-`cfg`, `sessionKey`, `sessionId`, `agentId`. Each bootstrap record has `name`,
-`path`, `missing`, and optional `content`. A handler can replace or extend the
-array, but final path deduplication, session/privacy filtering, and context
-budgets still apply.
+`cfg`, `sessionKey`, `sessionId`, `agentId`, `messageChannel`,
+`messageProvider`, `senderId`, and `channelContext`. Sender fields are trusted
+run context already established by ingress; hooks should still fail closed when
+they are absent. Each bootstrap record has `name`, `path`, `missing`, and
+optional `content`. A handler can replace or extend the array, but final path
+deduplication, session/privacy filtering, and context budgets still apply.
 
 **`session:patch`:** cloned post-operation `sessionEntry`, request-shaped `patch`,
 and `cfg`. The patch contains target/expectation fields and submitted settings,

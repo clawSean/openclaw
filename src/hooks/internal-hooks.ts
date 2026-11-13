@@ -6,6 +6,7 @@ import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import type { PluginHookChannelContext } from "../plugins/hook-channel-context.types.js";
 import {
   getActivePluginRegistry,
   getPluginRegistrationContext,
@@ -27,6 +28,14 @@ export type AgentBootstrapHookContext = {
   sessionKey?: string;
   sessionId?: string;
   agentId?: string;
+  /** Current transport surface, when this bootstrap belongs to an inbound turn. */
+  messageChannel?: string;
+  /** Tool/output provider for the current turn; may differ from messageChannel. */
+  messageProvider?: string;
+  /** Channel-authenticated sender id for this turn. */
+  senderId?: string | null;
+  /** Channel-owned sender/chat metadata for this turn. */
+  channelContext?: PluginHookChannelContext;
 };
 
 export type AgentBootstrapHookEvent = InternalHookEvent & {

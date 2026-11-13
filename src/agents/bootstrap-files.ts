@@ -11,6 +11,7 @@ import {
 } from "../hooks/internal-hooks.js";
 import { rememberBoundedKey } from "../infra/dedupe.js";
 import { isMemoryOriginEligibleForAutomaticInjection } from "../memory-host-sdk/host/types.js";
+import type { PluginHookChannelContext } from "../plugins/hook-channel-context.types.js";
 import { classifyActiveMemoryWorkspacePaths } from "../plugins/memory-runtime.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import { settleCurrentReadPreparations } from "../shared/current-read-authority.js";
@@ -235,6 +236,10 @@ type BootstrapFileResolutionParams = {
   sessionId?: string;
   chatType?: ChatType;
   agentId?: string;
+  messageChannel?: string;
+  messageProvider?: string;
+  senderId?: string | null;
+  channelContext?: PluginHookChannelContext;
   warn?: (message: string) => void;
   contextMode?: BootstrapContextMode;
   runKind?: BootstrapContextRunKind;
@@ -367,6 +372,10 @@ async function resolveBootstrapFiles(
       sessionKey: params.sessionKey,
       sessionId: params.sessionId,
       agentId,
+      messageChannel: params.messageChannel,
+      messageProvider: params.messageProvider,
+      senderId: params.senderId,
+      channelContext: params.channelContext,
     };
     const event = createInternalHookEvent("agent", "bootstrap", hookSessionKey, context);
     await triggerInternalHook(event);
