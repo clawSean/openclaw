@@ -1,7 +1,9 @@
+import type { OnePasswordCompatibility } from "./one-password-compat.js";
 import type { CreatedTabOperation, TabAccessEpoch, TabAccessPolicy } from "./tab-access.js";
 import type { AccessibleBrowserTabSnapshot, BrowserTabSnapshot } from "./tab-eligibility.js";
 
 export function createRelayCommandHandler(params: {
+  compatibility?: OnePasswordCompatibility;
   isCurrent: () => boolean;
   send: (message: Record<string, unknown>) => void;
   attachDebugger: CreatedTabOperation["attachDebugger"];

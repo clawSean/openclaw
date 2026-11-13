@@ -1,3 +1,5 @@
+const onePassword = document.getElementById("onePassword");
+const onePasswordHint = document.getElementById("onePasswordHint");
 const statusLine = document.getElementById("status");
 const pairedDetails = document.getElementById("pairedDetails");
 const accessMode = document.getElementById("accessMode");
@@ -59,6 +61,8 @@ function unpairedLabel(nativeBootstrap) {
 }
 
 async function refresh() {
+  onePassword.classList.add("hidden");
+  onePasswordHint.classList.add("hidden");
   const status = await chrome.runtime.sendMessage({ type: "getStatus" });
   if (status?.ok === false) {
     updateTransientRefresh(null);
@@ -120,6 +124,14 @@ async function refresh() {
     return;
   }
   const access = await chrome.runtime.sendMessage({ type: "getTabAccess", tabId: tab.id });
+  const showCompatibility = access.accessible && status.accessMode === "selected";
+  onePassword.classList.toggle("hidden", !showCompatibility);
+  onePasswordHint.classList.toggle("hidden", !showCompatibility);
+  onePassword.textContent = access.onePasswordCompatibility
+    ? "Disable 1Password compatibility"
+    : "Enable 1Password compatibility";
+  onePassword.dataset.tabId = String(tab.id);
+  onePassword.dataset.enable = String(!access.onePasswordCompatibility);
   shareOnly.classList.toggle("hidden", !access.eligible);
   shareOnly.dataset.tabId = String(tab.id);
   tabAction.classList.toggle("hidden", !access.eligible);
@@ -160,6 +172,14 @@ connectionAction.addEventListener("click", () => {
   void runAction({
     type: "setConnectionEnabled",
     enabled: connectionAction.dataset.enable === "true",
+  });
+});
+
+onePassword.addEventListener("click", () => {
+  void runAction({
+    type: "setOnePasswordCompatibility",
+    tabId: Number(onePassword.dataset.tabId),
+    enabled: onePassword.dataset.enable === "true",
   });
 });
 

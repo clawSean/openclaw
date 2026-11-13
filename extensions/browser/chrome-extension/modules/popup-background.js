@@ -13,6 +13,7 @@ function errorResponse(sendResponse, error) {
 /** Own manual/native pairing transactions and compact popup/options messages. */
 export function createPopupMessageHandler({
   chromeApi = chrome,
+  compatibility,
   pairingConfigStore,
   policy,
   accessReady,
@@ -540,6 +541,20 @@ export function createPopupMessageHandler({
             sendResponse({ ok: true, accessible: state.accessible, denied: state.denied });
             return;
           }
+          case "setOnePasswordCompatibility": {
+            await accessReady;
+            await requireAutomationAllowed();
+            if (!isValidTabId(msg.tabId) || typeof msg.enabled !== "boolean" || !compatibility) {
+              throw new Error("Invalid compatibility request.");
+            }
+            const state = await policy.inspectTab(msg.tabId);
+            if (!state.accessible || policy.mode !== ACCESS_MODE_SELECTED) {
+              throw new Error("Share this tab in Selected tabs mode first.");
+            }
+            compatibility.set(msg.tabId, msg.enabled);
+            sendResponse({ ok: true });
+            return;
+          }
           case "getTabAccess": {
             await accessReady;
             const state = await policy.inspectTab(msg.tabId);
@@ -548,6 +563,7 @@ export function createPopupMessageHandler({
               accessible: state.accessible,
               eligible: state.eligible,
               denied: state.denied,
+              onePasswordCompatibility: compatibility?.enabled(msg.tabId) === true,
             });
             return;
           }

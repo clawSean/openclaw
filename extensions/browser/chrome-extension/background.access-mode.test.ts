@@ -20,6 +20,44 @@ describe("relay command authorization", () => {
     vi.unstubAllGlobals();
   });
 
+  it("requires an explicitly shared selected tab for compatibility opt-in", async () => {
+    const harness = await loadBackground();
+    await expect(
+      sendRuntimeMessage(harness, {
+        type: "setOnePasswordCompatibility",
+        tabId: 41,
+        enabled: true,
+      }),
+    ).resolves.toMatchObject({ ok: false });
+    harness.shareTab(41);
+    await expect(
+      sendRuntimeMessage(harness, {
+        type: "setOnePasswordCompatibility",
+        tabId: 41,
+        enabled: true,
+      }),
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      sendRuntimeMessage(harness, {
+        type: "getTabAccess",
+        tabId: 41,
+      }),
+    ).resolves.toMatchObject({ onePasswordCompatibility: true });
+    await expect(
+      sendRuntimeMessage(harness, {
+        type: "setOnePasswordCompatibility",
+        tabId: 41,
+        enabled: false,
+      }),
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      sendRuntimeMessage(harness, {
+        type: "getTabAccess",
+        tabId: 41,
+      }),
+    ).resolves.toMatchObject({ onePasswordCompatibility: false });
+  });
+
   it("rejects every authority-bearing command after tab-group revocation", async () => {
     const harness = await loadBackground();
     const socket = harness.sockets[0];
@@ -239,6 +277,7 @@ describe("relay command authorization", () => {
         accessible: false,
         eligible: false,
         denied: false,
+        onePasswordCompatibility: false,
       });
       expect(harness.tabsGet).not.toHaveBeenCalled();
     },

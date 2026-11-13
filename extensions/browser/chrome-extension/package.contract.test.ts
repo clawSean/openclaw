@@ -51,7 +51,7 @@ describe("simplified Chrome extension package", () => {
     expect(manifest).toMatchObject({
       name: "OpenClaw Browser — Sean",
       short_name: "Sean Browser",
-      version: "2.3.0.3",
+      version: "2.3.0.4",
     });
     expect(options).toContain("Share only this tab");
     expect(options).not.toContain("tab group");

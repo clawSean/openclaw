@@ -1,3 +1,5 @@
+import { createOnePasswordCompatibility } from "./modules/one-password-compat.js";
+const compatibility = createOnePasswordCompatibility(() => tabAccessPolicy.mode === "selected");
 import {
   createNativeBootstrapController,
   discardRetiredCopilotState,
@@ -420,6 +422,7 @@ async function connectRelay(isConnectionAllowed = () => true) {
       ws.readyState === WebSocket.OPEN,
   );
   const handleRelayCommand = createRelayCommandHandler({
+    compatibility,
     send: (message) => send(message, ws),
     isCurrent: owner.isCurrent,
     attachDebugger: owner.attach,
@@ -587,6 +590,7 @@ async function startAutomation() {
 // ---------------------------------------------------------------------------
 
 const handlePopupMessage = createPopupMessageHandler({
+  compatibility,
   pairingConfigStore,
   policy: tabAccessPolicy,
   accessReady: tabAccessReady,
